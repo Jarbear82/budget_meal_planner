@@ -1,5 +1,6 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 pub struct AnalyticsView {
     pub services: AppServices,
@@ -12,13 +13,15 @@ impl AnalyticsView {
 }
 
 impl Render for AnalyticsView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .gap_4()
             .size_full()
             .p_6()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
                     .flex()
@@ -28,7 +31,7 @@ impl Render for AnalyticsView {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child("Financials & Cost Analytics"),
                     )
                     .child(
@@ -36,9 +39,9 @@ impl Render for AnalyticsView {
                             .px_3()
                             .py_1p5()
                             .rounded_md()
-                            .bg(rgb(0x27272a))
+                            .bg(cx.theme().muted)
                             .text_xs()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(cx.theme().muted_foreground)
                             .child("Date Range: Monthly Summary"),
                     ),
             )
@@ -50,34 +53,34 @@ impl Render for AnalyticsView {
                         div()
                             .flex_1()
                             .p_4()
-                            .bg(rgb(0x18181b))
+                            .bg(cx.theme().background)
                             .border_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .rounded_lg()
-                            .child(div().text_xs().text_color(rgb(0xa1a1aa)).child("PROJECTED EXPENDITURE"))
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("PROJECTED EXPENDITURE"))
                             .child(div().text_xl().font_weight(FontWeight::BOLD).text_color(rgb(0x10b981)).child("$0.00")),
                     )
                     .child(
                         div()
                             .flex_1()
                             .p_4()
-                            .bg(rgb(0x18181b))
+                            .bg(cx.theme().background)
                             .border_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .rounded_lg()
-                            .child(div().text_xs().text_color(rgb(0xa1a1aa)).child("ACTUAL EXPENDITURE"))
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("ACTUAL EXPENDITURE"))
                             .child(div().text_xl().font_weight(FontWeight::BOLD).text_color(rgb(0x38bdf8)).child("$0.00")),
                     )
                     .child(
                         div()
                             .flex_1()
                             .p_4()
-                            .bg(rgb(0x18181b))
+                            .bg(cx.theme().background)
                             .border_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .rounded_lg()
-                            .child(div().text_xs().text_color(rgb(0xa1a1aa)).child("VARIANCE"))
-                            .child(div().text_xl().font_weight(FontWeight::BOLD).text_color(rgb(0xf4f4f5)).child("$0.00 (0.0%)")),
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("VARIANCE"))
+                            .child(div().text_xl().font_weight(FontWeight::BOLD).text_color(cx.theme().foreground).child("$0.00 (0.0%)")),
                     ),
             )
     }

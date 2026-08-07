@@ -1,5 +1,6 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 pub struct PantryView {
     pub services: AppServices,
@@ -12,7 +13,7 @@ impl PantryView {
 }
 
 impl Render for PantryView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entries = self.services.pantry.get_pantry().unwrap_or_default();
 
         div()
@@ -21,6 +22,8 @@ impl Render for PantryView {
             .gap_4()
             .size_full()
             .p_6()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
                     .flex()
@@ -30,7 +33,7 @@ impl Render for PantryView {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child("Pantry Inventory & Stock Manager"),
                     )
                     .child(
@@ -38,9 +41,9 @@ impl Render for PantryView {
                             .px_3()
                             .py_1p5()
                             .rounded_md()
-                            .bg(rgb(0x3f3f46))
+                            .bg(cx.theme().muted)
                             .text_xs()
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child(format!("Total Items in Pantry: {}", entries.len())),
                     ),
             )
@@ -50,9 +53,9 @@ impl Render for PantryView {
                     .flex_col()
                     .gap_2()
                     .p_4()
-                    .bg(rgb(0x18181b))
+                    .bg(cx.theme().background)
                     .border_1()
-                    .border_color(rgb(0x27272a))
+                    .border_color(cx.theme().border)
                     .rounded_lg()
                     .child(
                         div()
@@ -60,10 +63,10 @@ impl Render for PantryView {
                             .justify_between()
                             .pb_2()
                             .border_b_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .text_xs()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(cx.theme().muted_foreground)
                             .child(div().w_1_3().child("Item ID"))
                             .child(div().w_1_3().child("Quantity Stored"))
                             .child(div().w_1_3().child("Expiration Date")),
@@ -75,12 +78,12 @@ impl Render for PantryView {
                             .justify_between()
                             .py_2()
                             .border_b_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .text_sm()
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child(div().w_1_3().child(format!("{}", e.item_id)))
                             .child(div().w_1_3().text_color(rgb(0x10b981)).child(format!("{}", e.quantity)))
-                            .child(div().w_1_3().text_color(rgb(0xa1a1aa)).child(exp_str))
+                            .child(div().w_1_3().text_color(cx.theme().muted_foreground).child(exp_str))
                     })),
             )
     }

@@ -1,5 +1,6 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{ActiveTheme, Theme, ThemeMode};
+use gpui_component::{ActiveTheme, Theme, ThemeMode, TitleBar as ComponentTitleBar};
 
 pub struct TitleBar {
     pub title: String,
@@ -17,149 +18,111 @@ impl TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_mode = cx.theme().mode;
-        let next_mode_label = if current_mode.is_dark() { "☀️ Light Mode" } else { "🌙 Dark Mode" };
+        let is_dark = cx.theme().mode.is_dark();
 
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px_4()
-            .py_2()
-            .bg(cx.theme().background)
-            .border_b_1()
-            .border_color(cx.theme().border)
+        ComponentTitleBar::new()
+            .on_close_window(|_, _window, cx| {
+                cx.quit();
+            })
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(cx.theme().foreground)
-                            .child(self.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .text_xs()
-                            .text_color(rgb(0x10b981))
-                            .child(self.status_badge.clone()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    // Theme Switcher Button
-                    .child(
-                        div()
-                            .id("theme-toggle-btn")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .hover(|s| s.bg(cx.theme().accent))
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(cx.theme().foreground)
-                            .on_click(cx.listener(move |_this, _, _window, cx| {
-                                let new_mode = if cx.theme().mode.is_dark() {
-                                    ThemeMode::Light
-                                } else {
-                                    ThemeMode::Dark
-                                };
-                                Theme::change(new_mode, None, cx);
-                            }))
-                            .child(next_mode_label),
-                    )
-                    .child(
-                        div()
-                            .px_2p5()
-                            .py_1()
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Offline Mode"),
-                    )
-                    // Custom Title Bar Window Controls (Minimize, Maximize, Close)
+                    .justify_between()
+                    .w_full()
+                    .px_2()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_1()
+                            .gap_3()
                             .child(
                                 div()
-                                    .id("titlebar-minimize")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(cx.theme().muted)
-                                    .hover(|s| s.bg(cx.theme().accent))
-                                    .text_xs()
+                                    .text_base()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(cx.theme().foreground)
-                                    .window_control_area(WindowControlArea::Min)
-                                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                        window.prevent_default();
-                                        cx.stop_propagation();
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        cx.stop_propagation();
-                                        window.minimize_window();
-                                    })
-                                    .child("—"),
+                                    .child(self.title.clone()),
                             )
                             .child(
                                 div()
-                                    .id("titlebar-maximize")
-                                    .px_3()
-                                    .py_1()
+                                    .px_2()
+                                    .py_0p5()
                                     .rounded_md()
                                     .bg(cx.theme().muted)
-                                    .hover(|s| s.bg(cx.theme().accent))
                                     .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(cx.theme().foreground)
-                                    .window_control_area(WindowControlArea::Max)
-                                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                        window.prevent_default();
-                                        cx.stop_propagation();
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        cx.stop_propagation();
-                                        window.zoom_window();
-                                    })
-                                    .child("□"),
+                                    .text_color(rgb(0x10b981))
+                                    .child(self.status_badge.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            // Interactive Switch Toggle for Light / Dark Mode
+                            .child(
+                                div()
+                                    .id("theme-switch-toggle")
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_full()
+                                    .bg(cx.theme().muted)
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                                        let new_mode = if cx.theme().mode.is_dark() {
+                                            ThemeMode::Light
+                                        } else {
+                                            ThemeMode::Dark
+                                        };
+                                        Theme::change(new_mode, None, cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(if is_dark { cx.theme().foreground } else { cx.theme().muted_foreground })
+                                            .child("🌙"),
+                                    )
+                                    // Pill Track & Sliding Knob
+                                    .child(
+                                        div()
+                                            .w_8()
+                                            .h_4()
+                                            .rounded_full()
+                                            .bg(if is_dark { cx.theme().primary } else { cx.theme().accent })
+                                            .flex()
+                                            .items_center()
+                                            .px_0p5()
+                                            .child(
+                                                div()
+                                                    .w_3()
+                                                    .h_3()
+                                                    .rounded_full()
+                                                    .bg(cx.theme().background)
+                                                    .when(is_dark, |s| s.ml_auto()),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(if !is_dark { cx.theme().foreground } else { cx.theme().muted_foreground })
+                                            .child("☀️"),
+                                    ),
                             )
                             .child(
                                 div()
-                                    .id("titlebar-close")
-                                    .px_3()
+                                    .px_2p5()
                                     .py_1()
                                     .rounded_md()
                                     .bg(cx.theme().muted)
-                                    .hover(|s| s.bg(cx.theme().danger).text_color(cx.theme().danger_foreground))
                                     .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(cx.theme().danger)
-                                    .window_control_area(WindowControlArea::Close)
-                                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                        window.prevent_default();
-                                        cx.stop_propagation();
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        cx.stop_propagation();
-                                        window.remove_window();
-                                    })
-                                    .child("✕"),
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Offline Mode"),
                             ),
                     ),
             )

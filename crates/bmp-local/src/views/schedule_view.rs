@@ -1,5 +1,6 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 pub struct ScheduleView {
     pub services: AppServices,
@@ -12,7 +13,7 @@ impl ScheduleView {
 }
 
 impl Render for ScheduleView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let scheduled_meals = self.services.meals.list_scheduled_meals().unwrap_or_default();
 
         div()
@@ -21,6 +22,8 @@ impl Render for ScheduleView {
             .gap_4()
             .size_full()
             .p_6()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
                     .flex()
@@ -30,7 +33,7 @@ impl Render for ScheduleView {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child("Meal Scheduler & Calendar"),
                     )
                     .child(
@@ -51,11 +54,11 @@ impl Render for ScheduleView {
                     .flex_col()
                     .gap_3()
                     .p_4()
-                    .bg(rgb(0x18181b))
+                    .bg(cx.theme().background)
                     .border_1()
-                    .border_color(rgb(0x27272a))
+                    .border_color(cx.theme().border)
                     .rounded_lg()
-                    .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(rgb(0xa1a1aa)).child("SCHEDULED MEALS"))
+                    .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(cx.theme().muted_foreground).child("SCHEDULED MEALS"))
                     .children(scheduled_meals.iter().map(|m| {
                         let status_str = if m.consumed.is_some() { "Consumed" } else { "Scheduled" };
                         div()
@@ -63,8 +66,9 @@ impl Render for ScheduleView {
                             .justify_between()
                             .p_3()
                             .rounded_md()
-                            .bg(rgb(0x27272a))
+                            .bg(cx.theme().muted)
                             .text_sm()
+                            .text_color(cx.theme().foreground)
                             .child(div().font_weight(FontWeight::BOLD).child(format!("Meal ID: {}", m.id)))
                             .child(div().text_color(rgb(0x10b981)).child(format!("People: {}", m.people)))
                             .child(div().text_color(rgb(0x38bdf8)).child(status_str))

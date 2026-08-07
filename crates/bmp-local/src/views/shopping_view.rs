@@ -1,5 +1,6 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 pub struct ShoppingView {
     pub services: AppServices,
@@ -12,13 +13,15 @@ impl ShoppingView {
 }
 
 impl Render for ShoppingView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .gap_4()
             .size_full()
             .p_6()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
                     .flex()
@@ -28,7 +31,7 @@ impl Render for ShoppingView {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child("Shopping List & In-Store Checklist"),
                     )
                     .child(
@@ -48,11 +51,11 @@ impl Render for ShoppingView {
                     .flex()
                     .gap_4()
                     .p_4()
-                    .bg(rgb(0x18181b))
+                    .bg(cx.theme().background)
                     .border_1()
-                    .border_color(rgb(0x27272a))
+                    .border_color(cx.theme().border)
                     .rounded_lg()
-                    .child(div().text_sm().text_color(rgb(0xa1a1aa)).child("Store Selection Filter: All Stores")),
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Store Selection Filter: All Stores")),
             )
             .child(
                 div()
@@ -60,12 +63,12 @@ impl Render for ShoppingView {
                     .flex_col()
                     .gap_3()
                     .p_4()
-                    .bg(rgb(0x18181b))
+                    .bg(cx.theme().background)
                     .border_1()
-                    .border_color(rgb(0x27272a))
+                    .border_color(cx.theme().border)
                     .rounded_lg()
-                    .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(rgb(0xa1a1aa)).child("DYNAMIC SHOPPING ITEMS"))
-                    .child(div().text_sm().text_color(rgb(0xa1a1aa)).child("Generate a shopping list from scheduled calendar meals to view store package counts and costs.")),
+                    .child(div().text_xs().font_weight(FontWeight::BOLD).text_color(cx.theme().muted_foreground).child("DYNAMIC SHOPPING ITEMS"))
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Generate a shopping list from scheduled calendar meals to view store package counts and costs.")),
             )
     }
 }

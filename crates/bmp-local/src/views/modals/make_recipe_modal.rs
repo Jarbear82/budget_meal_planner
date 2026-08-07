@@ -1,6 +1,7 @@
 use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::collections::HashMap;
@@ -54,7 +55,7 @@ impl MakeRecipeModal {
 }
 
 impl Render for MakeRecipeModal {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let recipe_name = self.recipe.as_ref().map(|r| r.name.as_str()).unwrap_or("Select a Recipe");
 
         div()
@@ -62,15 +63,15 @@ impl Render for MakeRecipeModal {
             .flex_col()
             .gap_4()
             .p_6()
-            .bg(rgb(0x18181b))
+            .bg(cx.theme().background)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(cx.theme().border)
             .rounded_lg()
             .child(
                 div()
                     .text_xl()
                     .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(0xf4f4f5))
+                    .text_color(cx.theme().foreground)
                     .child(format!("Make Recipe: {}", recipe_name)),
             )
             .child(
@@ -78,11 +79,11 @@ impl Render for MakeRecipeModal {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(div().text_sm().text_color(rgb(0xa1a1aa)).child("Batch Scaling Factor:"))
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Batch Scaling Factor:"))
                     .child(
                         div()
                             .p_2()
-                            .bg(rgb(0x27272a))
+                            .bg(cx.theme().muted)
                             .rounded_md()
                             .text_sm()
                             .text_color(rgb(0x10b981))
@@ -92,7 +93,7 @@ impl Render for MakeRecipeModal {
             .child(
                 div()
                     .p_3()
-                    .bg(rgb(0x27272a))
+                    .bg(cx.theme().muted)
                     .rounded_md()
                     .text_xs()
                     .text_color(rgb(0x38bdf8))

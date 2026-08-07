@@ -1,5 +1,6 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::ActiveTheme;
 
 pub struct ItemsView {
     pub services: AppServices,
@@ -16,7 +17,7 @@ impl ItemsView {
 }
 
 impl Render for ItemsView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let items = self.services.items.list_items().unwrap_or_default();
         let stores = self.services.items.list_stores().unwrap_or_default();
 
@@ -26,6 +27,8 @@ impl Render for ItemsView {
             .gap_4()
             .size_full()
             .p_6()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
                     .flex()
@@ -35,7 +38,7 @@ impl Render for ItemsView {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child("Items & Store Packages Matrix"),
                     )
                     .child(
@@ -43,9 +46,9 @@ impl Render for ItemsView {
                             .px_3()
                             .py_1p5()
                             .rounded_md()
-                            .bg(rgb(0x3f3f46))
+                            .bg(cx.theme().muted)
                             .text_xs()
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child(format!("Total Items: {}", items.len())),
                     ),
             )
@@ -54,16 +57,18 @@ impl Render for ItemsView {
                     .flex()
                     .gap_3()
                     .p_3()
-                    .bg(rgb(0x27272a))
+                    .bg(cx.theme().muted)
                     .rounded_lg()
                     .child(
                         div()
                             .flex_1()
                             .p_2()
-                            .bg(rgb(0x18181b))
+                            .bg(cx.theme().background)
+                            .border_1()
+                            .border_color(cx.theme().border)
                             .rounded_md()
                             .text_sm()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(cx.theme().muted_foreground)
                             .child("Search ingredients by name or category..."),
                     ),
             )
@@ -73,9 +78,9 @@ impl Render for ItemsView {
                     .flex_col()
                     .gap_2()
                     .p_4()
-                    .bg(rgb(0x18181b))
+                    .bg(cx.theme().background)
                     .border_1()
-                    .border_color(rgb(0x27272a))
+                    .border_color(cx.theme().border)
                     .rounded_lg()
                     .child(
                         div()
@@ -83,10 +88,10 @@ impl Render for ItemsView {
                             .justify_between()
                             .pb_2()
                             .border_b_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .text_xs()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(cx.theme().muted_foreground)
                             .child(div().w_1_4().child("Item Name"))
                             .child(div().w_1_4().child("Density (g/ml)"))
                             .child(div().w_1_4().child("Purchase Mode"))
@@ -105,13 +110,13 @@ impl Render for ItemsView {
                             .justify_between()
                             .py_2()
                             .border_b_1()
-                            .border_color(rgb(0x27272a))
+                            .border_color(cx.theme().border)
                             .text_sm()
-                            .text_color(rgb(0xf4f4f5))
+                            .text_color(cx.theme().foreground)
                             .child(div().w_1_4().font_weight(FontWeight::BOLD).child(item.name))
                             .child(div().w_1_4().text_color(rgb(0x10b981)).child(density_str))
                             .child(div().w_1_4().text_color(rgb(0x38bdf8)).child(mode_str))
-                            .child(div().w_1_4().text_color(rgb(0xa1a1aa)).child(category_str))
+                            .child(div().w_1_4().text_color(cx.theme().muted_foreground).child(category_str))
                     })),
             )
             .child(
@@ -122,10 +127,10 @@ impl Render for ItemsView {
                         div()
                             .flex_1()
                             .p_4()
-                            .bg(rgb(0x27272a))
+                            .bg(cx.theme().muted)
                             .rounded_lg()
-                            .child(div().text_sm().font_weight(FontWeight::BOLD).child("Stores Registry"))
-                            .child(div().text_xs().text_color(rgb(0xa1a1aa)).child(format!("{} Registered Stores", stores.len()))),
+                            .child(div().text_sm().font_weight(FontWeight::BOLD).text_color(cx.theme().foreground).child("Stores Registry"))
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} Registered Stores", stores.len()))),
                     ),
             )
     }
