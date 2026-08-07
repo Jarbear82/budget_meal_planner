@@ -1,0 +1,10 @@
+[package]
+name = "bmp-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmp-domain = { path = "../bmp-domain" }
+bmp-services = { path = "../bmp-services" }
+clap.workspace = true
+tokio.workspace = true

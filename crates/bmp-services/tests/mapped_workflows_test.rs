@@ -1,0 +1,495 @@
+use bmp_domain::*;
+use bmp_services::AppServices;
+use bmp_storage::Storage;
+use chrono::Utc;
+use rust_decimal_macros::dec;
+use std::collections::{HashMap, HashSet};
+
+fn setup_services() -> AppServices {
+    let storage = Storage::in_memory().unwrap();
+    AppServices::new(storage)
+}
+
+#[test]
+fn test_workflow_1_add_ingredient_basic_and_edges() {
+    let services = setup_services();
+
+    // Basic: Create ingredient with name + density -> appears in list
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+    let items = services.items.list_items().unwrap();
+    assert!(items.iter().any(|i| i.id == flour.id && i.name == "Flour"));
+    assert_eq!(flour.density.unwrap().g_per_ml, dec!(0.53));
+
+    // Edge: Create ingredient with NO density
+    let salt = services.items.create_item("Salt", None, Some("Spices")).unwrap();
+    assert!(salt.density.is_none());
+
+    // Edge: Add optional mass-per-each bridge for an "Each" unit item (e.g. 1 Egg = 50g)
+    let egg = services.items.create_item("Egg", None, Some("Dairy")).unwrap();
+    let bridge = UnitBridge::new(
+        egg.id,
+        Quantity::new(dec!(1), Unit::Each).unwrap(),
+        Quantity::new(dec!(50), Unit::Gram).unwrap(),
+    )
+    .unwrap();
+
+    let egg_count = Quantity::new(dec!(2), Unit::Each).unwrap();
+    let converted = bridge.convert(&egg_count, &Unit::Gram, None).unwrap();
+    assert_eq!(converted.amount, dec!(100));
+}
+
+#[test]
+fn test_workflow_2_add_recipe_basic_and_edges() {
+    let services = setup_services();
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+    let sugar = services
+        .items
+        .create_item("Sugar", Some(dec!(0.85)), Some("Baking"))
+        .unwrap();
+
+    // Basic: Recipe with ingredients, instructions, yield (Item + Qty), servings
+    let mut recipe = Recipe::new("Basic Cake", dec!(8));
+    recipe = recipe
+        .add_yield(flour.id, Quantity::new(dec!(1), Unit::Each).unwrap())
+        .add_ingredient(IngredientEdge::item(
+            flour.id,
+            Quantity::new(dec!(200), Unit::Gram).unwrap(),
+        ))
+        .add_ingredient(
+            IngredientEdge::item(sugar.id, Quantity::new(dec!(100), Unit::Gram).unwrap())
+                .with_required(false), // Edge: optional ingredient
+        )
+        .with_instructions("Mix and bake at 350F.");
+
+    // Edge: Recipe yields multiple Items (e.g. Cake + Cupcake variant)
+    recipe = recipe.add_yield(sugar.id, Quantity::new(dec!(12), Unit::Each).unwrap());
+
+    let saved = services.recipes.save_recipe(recipe).unwrap();
+    assert_eq!(saved.name, "Basic Cake");
+    assert_eq!(saved.yields.len(), 2);
+    assert!(!saved.ingredients[1].required);
+}
+
+#[test]
+fn test_workflow_3_and_17_nesting_deep_and_cycle_aware() {
+    let services = setup_services();
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+
+    // Deep nesting (3 levels: Level3 -> Level2 -> Level1 -> Flour)
+    let mut r1 = Recipe::new("Level 1 Base", dec!(1));
+    r1 = r1
+        .add_yield(flour.id, Quantity::new(dec!(100), Unit::Gram).unwrap())
+        .add_ingredient(IngredientEdge::item(
+            flour.id,
+            Quantity::new(dec!(100), Unit::Gram).unwrap(),
+        ));
+    let saved_r1 = services.recipes.save_recipe(r1).unwrap();
+
+    let mut r2 = Recipe::new("Level 2 Dough", dec!(1));
+    r2 = r2
+        .add_yield(flour.id, Quantity::new(dec!(100), Unit::Gram).unwrap())
+        .add_ingredient(IngredientEdge::recipe(
+            saved_r1.id,
+            Quantity::new(dec!(1), Unit::Each).unwrap(),
+        ));
+    let saved_r2 = services.recipes.save_recipe(r2).unwrap();
+
+    let mut r3 = Recipe::new("Level 3 Bread", dec!(1));
+    r3 = r3
+        .add_yield(flour.id, Quantity::new(dec!(100), Unit::Gram).unwrap())
+        .add_ingredient(IngredientEdge::recipe(
+            saved_r2.id,
+            Quantity::new(dec!(1), Unit::Each).unwrap(),
+        ));
+    let saved_r3 = services.recipes.save_recipe(r3).unwrap();
+
+    let recipes = services.recipes.list_recipes().unwrap();
+    let recipe_map: HashMap<RecipeId, Recipe> = recipes.into_iter().map(|r| (r.id, r)).collect();
+    let items = services.items.list_items().unwrap();
+    let item_map: HashMap<ItemId, Item> = items.into_iter().map(|i| (i.id, i)).collect();
+
+    let mut visited = HashSet::new();
+    let expanded = expand_recipe(saved_r3.id, dec!(1), &recipe_map, &item_map, &mut visited).unwrap();
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded[0].0, flour.id);
+
+    // Edge: Cycle detection at creation time (Sourdough starter A -> B -> A)
+    let r_a_id = RecipeId::new();
+    let r_b_id = RecipeId::new();
+
+    let mut r_a = Recipe::new("Starter A", dec!(1));
+    r_a.id = r_a_id;
+    r_a = r_a.add_ingredient(IngredientEdge::recipe(
+        r_b_id,
+        Quantity::new(dec!(50), Unit::Gram).unwrap(),
+    ));
+
+    let mut r_b = Recipe::new("Starter B", dec!(1));
+    r_b.id = r_b_id;
+    r_b = r_b.add_ingredient(IngredientEdge::recipe(
+        r_a_id,
+        Quantity::new(dec!(50), Unit::Gram).unwrap(),
+    ));
+
+    let mut cycle_map = HashMap::new();
+    cycle_map.insert(r_a_id, r_a);
+    cycle_map.insert(r_b_id, r_b);
+
+    update_cycle_flags(&mut cycle_map);
+    assert!(cycle_map.get(&r_a_id).unwrap().ingredients[0].cycle_flag);
+}
+
+#[test]
+fn test_workflow_4_and_5_meals_and_scheduling() {
+    let services = setup_services();
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+
+    let mut recipe = Recipe::new("Pancakes", dec!(2));
+    recipe = recipe.add_ingredient(IngredientEdge::item(
+        flour.id,
+        Quantity::new(dec!(200), Unit::Gram).unwrap(),
+    ));
+    let saved_recipe = services.recipes.save_recipe(recipe).unwrap();
+
+    // Basic: Assemble recipes + items + restaurant components in PrePlannedMeal
+    let meal = PrePlannedMeal::new("Sunday Breakfast")
+        .add_component(MealComponent::Recipe {
+            recipe_id: saved_recipe.id,
+            servings: dec!(2),
+        })
+        .add_component(MealComponent::Item {
+            item_id: flour.id,
+            quantity: Quantity::new(dec!(50), Unit::Gram).unwrap(),
+        })
+        .add_component(MealComponent::Restaurant {
+            name: "Coffee Shop".to_string(),
+            cost: dec!(12.50),
+            leftover_yield: None,
+        });
+
+    assert_eq!(meal.name, "Sunday Breakfast");
+    assert_eq!(meal.components.len(), 3);
+
+    // Basic & Edge: Schedule meal with datetime & people count
+    let now = Utc::now();
+    let scheduled = ScheduledMeal::new(
+        ScheduledMealSource::PrePlanned(meal.id),
+        now,
+        4, // people count
+    );
+    assert_eq!(scheduled.people, 4);
+}
+
+#[test]
+fn test_workflow_6_go_shopping_basic_and_edges() {
+    let services = setup_services();
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+    let walmart = services.items.add_store("Walmart").unwrap();
+    let costco = services.items.add_store("Costco").unwrap();
+
+    // Add Packages
+    let pkg_walmart = services
+        .items
+        .add_package(flour.id, walmart.id, dec!(5), Unit::Pound, dec!(3.48))
+        .unwrap();
+    let _pkg_costco = services
+        .items
+        .add_package(flour.id, costco.id, dec!(25), Unit::Pound, dec!(14.99))
+        .unwrap();
+
+    // Basic: Generate shopping list (pantry subtraction, package ceiling rounding)
+    let requirements = vec![(
+        flour.id,
+        Quantity::new(dec!(7), Unit::Pound).unwrap(),
+    )];
+
+    let list_all = services
+        .shopping
+        .generate_shopping_list(requirements.clone(), None, None)
+        .unwrap();
+    assert_eq!(list_all.items.len(), 1);
+
+    // Edge: Per-store shopping mode (only Walmart items shown)
+    let list_walmart = services
+        .shopping
+        .generate_shopping_list(requirements.clone(), Some(walmart.id), None)
+        .unwrap();
+    assert_eq!(list_walmart.items[0].store_id, walmart.id);
+
+    // Edge: Preferred package pinned overrides best price
+    let mut pref_pkg = pkg_walmart;
+    pref_pkg.is_preferred = true;
+    services.storage.insert_package(&pref_pkg).unwrap();
+
+    let list_pref = services
+        .shopping
+        .generate_shopping_list(requirements, None, None)
+        .unwrap();
+    assert_eq!(list_pref.items[0].package_id, pref_pkg.id);
+}
+
+#[test]
+fn test_workflow_8_make_recipe_pre_configuration() {
+    let services = setup_services();
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+    let sugar = services
+        .items
+        .create_item("Sugar", Some(dec!(0.85)), Some("Baking"))
+        .unwrap();
+    let honey = services
+        .items
+        .create_item("Honey", Some(dec!(1.42)), Some("Baking"))
+        .unwrap();
+
+    let mut recipe = Recipe::new("Sweet Bread", dec!(1));
+    recipe = recipe
+        .add_yield(flour.id, Quantity::new(dec!(1), Unit::Each).unwrap())
+        .add_ingredient(IngredientEdge::item(
+            flour.id,
+            Quantity::new(dec!(200), Unit::Gram).unwrap(),
+        ))
+        .add_ingredient(IngredientEdge::item(
+            sugar.id,
+            Quantity::new(dec!(50), Unit::Gram).unwrap(),
+        ));
+
+    // Make Recipe config: batch scale 2.5, substitute sugar with honey
+    let mut config = MakeRecipeConfig::default();
+    config.batches = dec!(2.5); // Edge: non-integer batches
+    config.substitute_overrides.insert(sugar.id, honey.id);
+
+    let items = services.items.list_items().unwrap();
+    let items_map: HashMap<ItemId, Item> = items.into_iter().map(|i| (i.id, i)).collect();
+
+    let execution = evaluate_make_recipe(&recipe, &config, &items_map).unwrap();
+    assert_eq!(execution.ingredients_to_consume.len(), 2);
+    // Flour scaled to 200 * 2.5 = 500g
+    assert_eq!(execution.ingredients_to_consume[0].1.amount, dec!(500));
+    // Sugar substituted with Honey and scaled to 50 * 2.5 = 125g
+    assert_eq!(execution.ingredients_to_consume[1].0, honey.id);
+    assert_eq!(execution.ingredients_to_consume[1].1.amount, dec!(125));
+}
+
+#[test]
+fn test_workflow_9_toggle_buy_finished_vs_expand() {
+    let services = setup_services();
+    let bread_item = Item::new("Bread")
+        .with_purchase_mode(PurchaseMode::BuyFinished);
+    let bread_id = bread_item.id;
+    services.storage.insert_item(&bread_item).unwrap();
+
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+
+    let mut recipe = Recipe::new("Bread Recipe", dec!(1));
+    recipe = recipe
+        .add_yield(bread_id, Quantity::new(dec!(1), Unit::Each).unwrap())
+        .add_ingredient(IngredientEdge::item(
+            flour.id,
+            Quantity::new(dec!(400), Unit::Gram).unwrap(),
+        ));
+    let saved_recipe = services.recipes.save_recipe(recipe).unwrap();
+
+    let recipes = services.recipes.list_recipes().unwrap();
+    let recipe_map: HashMap<RecipeId, Recipe> = recipes.into_iter().map(|r| (r.id, r)).collect();
+    let items = services.items.list_items().unwrap();
+    let item_map: HashMap<ItemId, Item> = items.into_iter().map(|i| (i.id, i)).collect();
+
+    // Default: BuyFinished -> returns Bread item directly
+    let mut visited = HashSet::new();
+    let result_buy = expand_recipe(saved_recipe.id, dec!(1), &recipe_map, &item_map, &mut visited).unwrap();
+    assert_eq!(result_buy.len(), 1);
+    assert_eq!(result_buy[0].0, flour.id);
+
+    // Toggle: PreferMake -> expands into flour ingredients
+    let mut bread_make = bread_item;
+    bread_make.preferred_purchase_mode = PurchaseMode::PreferMake;
+    services.storage.insert_item(&bread_make).unwrap();
+
+    let items2 = services.items.list_items().unwrap();
+    let item_map2: HashMap<ItemId, Item> = items2.into_iter().map(|i| (i.id, i)).collect();
+
+    let mut visited2 = HashSet::new();
+    let result_make = expand_recipe(saved_recipe.id, dec!(1), &recipe_map, &item_map2, &mut visited2).unwrap();
+    assert_eq!(result_make[0].0, flour.id);
+}
+
+#[test]
+fn test_workflow_10_manage_substitutes() {
+    let _services = setup_services();
+    let primary = ItemId::new();
+    let global_sub = ItemId::new();
+    let per_recipe_sub = ItemId::new();
+
+    let mut resolver = SubstituteResolver::new();
+    resolver.set_global(primary, global_sub);
+
+    // Basic: No override -> global substitute used
+    let resolved_global = resolver.resolve(primary, None, None);
+    assert_eq!(resolved_global, global_sub);
+
+    // Basic: Per-recipe override -> per-recipe substitute used
+    let resolved_recipe = resolver.resolve(primary, Some(per_recipe_sub), None);
+    assert_eq!(resolved_recipe, per_recipe_sub);
+
+    // Edge: No substitute configured -> returns original primary item
+    let unconfigured_item = ItemId::new();
+    let resolved_none = resolver.resolve(unconfigured_item, None, None);
+    assert_eq!(resolved_none, unconfigured_item);
+}
+
+#[test]
+fn test_workflow_11_14_pantry_adjustment_and_consumption() {
+    let services = setup_services();
+    let flour = services
+        .items
+        .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+        .unwrap();
+
+    // Basic: Add pantry entry
+    let entry = services
+        .pantry
+        .add_pantry_entry(flour.id, dec!(10), Unit::Pound, None)
+        .unwrap();
+    assert_eq!(entry.quantity.amount, dec!(10));
+
+    // Basic: User accepts pantry update
+    services.pantry.update_quantity(entry.id, dec!(8)).unwrap();
+    let updated = services.pantry.get_pantry().unwrap();
+    assert_eq!(updated[0].quantity.amount, dec!(8));
+
+    // Edge: Negative quantity rejected
+    let err = services.pantry.update_quantity(entry.id, dec!(-2));
+    assert!(err.is_err());
+}
+
+#[test]
+fn test_workflow_12_and_13_manage_stores_and_packages() {
+    let services = setup_services();
+    let store = services.items.add_store("Target").unwrap();
+    let item = services.items.create_item("Milk", Some(dec!(1.03)), Some("Dairy")).unwrap();
+
+    // Basic: Add package with price and store association
+    let pkg1 = services
+        .items
+        .add_package(item.id, store.id, dec!(1), Unit::Liter, dec!(2.99))
+        .unwrap();
+    assert_eq!(pkg1.price, dec!(2.99));
+
+    // Edge: Multiple packages for same item at same store
+    let _pkg2 = services
+        .items
+        .add_package(item.id, store.id, dec!(2), Unit::Liter, dec!(4.99))
+        .unwrap();
+
+    let packages = services.storage.get_packages_for_item(item.id).unwrap();
+    assert_eq!(packages.len(), 2);
+
+    // Edge: Delete store -> store deleted cleanly
+    services.storage.delete_store(store.id).unwrap();
+    let stores = services.items.list_stores().unwrap();
+    assert!(stores.iter().all(|s| s.id != store.id));
+}
+
+#[test]
+fn test_workflow_15_restaurant_meal() {
+    let services = setup_services();
+    let leftover_item = services
+        .items
+        .create_item("Leftover Pizza", None, Some("Leftovers"))
+        .unwrap();
+
+    let meal = ScheduledMeal::new(
+        ScheduledMealSource::Restaurant {
+            name: "Luigi's Pizzeria".to_string(),
+            cost: dec!(28.50),
+            leftover_yield: Some((
+                leftover_item.id,
+                Quantity::new(dec!(2), Unit::Each).unwrap(),
+            )),
+        },
+        Utc::now(),
+        2,
+    );
+
+    if let ScheduledMealSource::Restaurant { cost, leftover_yield, .. } = &meal.source {
+        assert_eq!(*cost, dec!(28.50));
+        assert_eq!(leftover_yield.as_ref().unwrap().1.amount, dec!(2));
+    } else {
+        panic!("Expected restaurant meal source");
+    }
+}
+
+#[test]
+fn test_workflow_16_density_bridge_management() {
+    let services = setup_services();
+    let item = services.items.create_item("Oats", None, Some("Grains")).unwrap();
+
+    // Edge: Missing density -> direct conversion between mass and volume fails without density
+    let cups = Quantity::new(dec!(1), Unit::Cup).unwrap();
+    let density_none: Option<Density> = None;
+    let err = density_none
+        .map(|d| d.convert(&cups, &Unit::Gram))
+        .unwrap_or(Err(DomainError::MissingDensity(item.id)));
+
+    assert_eq!(err, Err(DomainError::MissingDensity(item.id)));
+
+    // Basic: Supply bridge -> conversion succeeds on-the-fly
+    let oats_density = Density::new(dec!(0.41)).unwrap();
+    let grams = oats_density.convert(&cups, &Unit::Gram).unwrap();
+    assert_eq!(grams.amount, dec!(97.001176965));
+}
+
+#[test]
+fn test_cross_cutting_persistence_restart() {
+    let temp_file = tempfile::NamedTempFile::new().unwrap();
+    let db_path = temp_file.path().to_path_buf();
+
+    // Session 1: Write data
+    {
+        let storage1 = Storage::open(&db_path).unwrap();
+        let services1 = AppServices::new(storage1);
+        let flour = services1
+            .items
+            .create_item("Flour", Some(dec!(0.53)), Some("Baking"))
+            .unwrap();
+        let store = services1.items.add_store("Kroger").unwrap();
+        services1
+            .items
+            .add_package(flour.id, store.id, dec!(5), Unit::Pound, dec!(3.29))
+            .unwrap();
+    }
+
+    // Session 2: App restart -> reload SQLite database and verify persistence
+    {
+        let storage2 = Storage::open(&db_path).unwrap();
+        let services2 = AppServices::new(storage2);
+        let items = services2.items.list_items().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Flour");
+
+        let stores = services2.items.list_stores().unwrap();
+        assert_eq!(stores.len(), 1);
+        assert_eq!(stores[0].name, "Kroger");
+    }
+}

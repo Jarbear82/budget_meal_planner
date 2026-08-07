@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bmp-domain",
+    "crates/bmp-storage",
+    "crates/bmp-services",
+    "crates/bmp-local",
+    "crates/bmp-common-ingredients",
+    "crates/bmp-cli",
+    "crates/bmp-tui",
+    "crates/bmp-mobile",
+    "crates/bmp-server",
+]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rust_decimal = { version = "1.36", features = ["serde-with-str"] }
+rust_decimal_macros = "1.36"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"
+anyhow = "1.0"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1.41", features = ["full"] }
+tracing = "0.1"
+proptest = "1.6"
+tempfile = "3.14"
+gpui = { git = "https://github.com/zed-industries/zed" }
+clap = { version = "4.5", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
+axum = "0.8"
+
+[patch.crates-io]
+zune-jpeg = { path = "patches/zune-jpeg-0.5.15" }

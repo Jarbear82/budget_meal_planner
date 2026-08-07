@@ -1,0 +1,148 @@
+use crate::error::DomainError;
+use crate::id::{ItemId, PackageId, StoreId};
+use crate::item::{Item, PurchaseMode};
+use crate::package::Package;
+use crate::pantry::PantryEntry;
+use crate::units::Quantity;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShoppingLineItem {
+    pub item_id: ItemId,
+    pub item_name: String,
+    pub store_id: StoreId,
+    pub package_id: PackageId,
+    pub required_qty: Quantity,
+    pub package_qty: Quantity,
+    pub package_count: u32,
+    pub package_price: Decimal,
+    pub line_total: Decimal,
+    pub is_checked: bool,
+    pub purchase_mode: PurchaseMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShoppingList {
+    pub items: Vec<ShoppingLineItem>,
+    pub subtotal: Decimal,
+    pub tax_rate: Option<Decimal>,
+    pub total: Decimal,
+}
+
+pub fn generate_shopping_list(
+    item_requirements: Vec<(ItemId, Quantity)>,
+    items_map: &HashMap<ItemId, Item>,
+    packages_map: &HashMap<ItemId, Vec<Package>>,
+    pantry_entries: &[PantryEntry],
+    selected_store_id: Option<StoreId>,
+    tax_rate: Option<Decimal>,
+) -> Result<ShoppingList, DomainError> {
+    // 1. Consolidate requirements per ItemId
+    let mut consolidated: HashMap<ItemId, Quantity> = HashMap::new();
+    for (item_id, qty) in item_requirements {
+        consolidated
+            .entry(item_id)
+            .and_modify(|existing| {
+                if existing.unit == qty.unit {
+                    existing.amount += qty.amount;
+                }
+            })
+            .or_insert(qty);
+    }
+
+    // 2. Subtract Pantry quantities
+    for pantry in pantry_entries {
+        if let Some(req) = consolidated.get_mut(&pantry.item_id) {
+            if req.unit == pantry.quantity.unit {
+                if req.amount > pantry.quantity.amount {
+                    req.amount -= pantry.quantity.amount;
+                } else {
+                    req.amount = Decimal::ZERO;
+                }
+            }
+        }
+    }
+
+    let mut line_items = Vec::new();
+
+    // 3. For each item with remaining requirement, find best matching package
+    for (item_id, req_qty) in consolidated {
+        if req_qty.amount <= Decimal::ZERO {
+            continue;
+        }
+
+        let item = match items_map.get(&item_id) {
+            Some(i) => i,
+            None => continue,
+        };
+
+        let available_pkgs = match packages_map.get(&item_id) {
+            Some(pkgs) if !pkgs.is_empty() => pkgs,
+            _ => continue,
+        };
+
+        // Filter by selected store if specified
+        let store_pkgs: Vec<&Package> = if let Some(sid) = selected_store_id {
+            available_pkgs.iter().filter(|p| p.store_id == sid).collect()
+        } else {
+            available_pkgs.iter().collect()
+        };
+
+        if store_pkgs.is_empty() {
+            continue;
+        }
+
+        // Pick preferred package or best price per unit
+        let chosen_pkg = store_pkgs
+            .iter()
+            .find(|p| p.is_preferred)
+            .copied()
+            .unwrap_or_else(|| {
+                store_pkgs
+                    .iter()
+                    .min_by(|a, b| {
+                        let unit_cost_a = a.price / a.quantity.amount;
+                        let unit_cost_b = b.price / b.quantity.amount;
+                        unit_cost_a.partial_cmp(&unit_cost_b).unwrap()
+                    })
+                    .copied()
+                    .unwrap()
+            });
+
+        // Round UP required quantity to full package count
+        let ratio = req_qty.amount / chosen_pkg.quantity.amount;
+        let package_count = ratio.ceil().to_u32().unwrap_or(1).max(1);
+        let line_total = chosen_pkg.price * Decimal::from(package_count);
+
+        line_items.push(ShoppingLineItem {
+            item_id,
+            item_name: item.name.clone(),
+            store_id: chosen_pkg.store_id,
+            package_id: chosen_pkg.id,
+            required_qty: req_qty,
+            package_qty: chosen_pkg.quantity.clone(),
+            package_count,
+            package_price: chosen_pkg.price,
+            line_total,
+            is_checked: false,
+            purchase_mode: item.preferred_purchase_mode,
+        });
+    }
+
+    let subtotal: Decimal = line_items.iter().map(|item| item.line_total).sum();
+    let total = if let Some(tax) = tax_rate {
+        subtotal * (Decimal::ONE + tax)
+    } else {
+        subtotal
+    };
+
+    Ok(ShoppingList {
+        items: line_items,
+        subtotal,
+        tax_rate,
+        total,
+    })
+}

@@ -1,4 +1,4 @@
-**Budget Meal Planner – Software Requirements Specification v5**  
+# **Budget Meal Planner – Software Requirements Specification v5**  
 *(Rust Multi-Crate Edition – Unified Domain Model)*
 
 **Developer:** Jarom Anderson  
@@ -25,7 +25,7 @@ To be considered complete, the project must fully implement the meal planning, s
 ## 1.3 Technologies Used
 
 ### 1.3.1 Software (Core)
-- **Language:** Rust (Edition 2021 or later)
+- **Language:** Rust (Edition 2024 or later)
 - **Build system:** Cargo workspace
 - **Domain & Services:** Pure Rust (no I/O in domain)
 - **Persistence:** SQLite via `rusqlite` (primary) or `sqlx`

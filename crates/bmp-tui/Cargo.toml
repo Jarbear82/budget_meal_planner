@@ -1,0 +1,11 @@
+[package]
+name = "bmp-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmp-domain = { path = "../bmp-domain" }
+bmp-services = { path = "../bmp-services" }
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "bmp-common-ingredients"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmp-domain = { path = "../bmp-domain" }
+bmp-storage = { path = "../bmp-storage" }
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "bmp-local"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bmp-domain = { path = "../bmp-domain" }
+bmp-storage = { path = "../bmp-storage" }
+bmp-services = { path = "../bmp-services" }
+bmp-common-ingredients = { path = "../bmp-common-ingredients" }
+gpui.workspace = true
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["wayland", "x11"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+tokio.workspace = true
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true
+chrono.workspace = true
+uuid.workspace = true
