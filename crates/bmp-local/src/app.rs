@@ -4,6 +4,7 @@ use bmp_common_ingredients::seed_common_ingredients;
 use bmp_services::AppServices;
 use bmp_storage::Storage;
 use gpui::*;
+use gpui_component::tab::{Tab, TabBar};
 use gpui_component::ActiveTheme;
 
 pub struct BudgetMealPlannerApp {
@@ -63,82 +64,25 @@ impl Render for BudgetMealPlannerApp {
             .text_color(cx.theme().foreground)
             // Custom Title Bar
             .child(cx.new(|_| TitleBar::new("Budget Meal Planner v5", "Database Ready")))
-            // Navigation Tab Bar
+            // Navigation TabBar using gpui_component::tab::TabBar & Tab
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .gap_1()
                     .px_4()
                     .py_2()
-                    .bg(cx.theme().background)
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(if active_tab == 0 { cx.theme().accent } else { cx.theme().muted })
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| this.set_tab(0, cx)))
-                            .child("Items & Packages"),
-                    )
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(if active_tab == 1 { cx.theme().accent } else { cx.theme().muted })
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| this.set_tab(1, cx)))
-                            .child("Recipes"),
-                    )
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(if active_tab == 2 { cx.theme().accent } else { cx.theme().muted })
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| this.set_tab(2, cx)))
-                            .child("Schedule"),
-                    )
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(if active_tab == 3 { cx.theme().accent } else { cx.theme().muted })
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| this.set_tab(3, cx)))
-                            .child("Shopping List"),
-                    )
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(if active_tab == 4 { cx.theme().accent } else { cx.theme().muted })
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| this.set_tab(4, cx)))
-                            .child("Pantry"),
-                    )
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(if active_tab == 5 { cx.theme().accent } else { cx.theme().muted })
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _window, cx| this.set_tab(5, cx)))
-                            .child("Analytics"),
+                        TabBar::new("app-main-tabs")
+                            .selected_index(active_tab)
+                            .on_click(cx.listener(|this, idx, _window, cx| {
+                                this.set_tab(*idx, cx);
+                            }))
+                            .child(Tab::new().label("Items & Packages"))
+                            .child(Tab::new().label("Recipes"))
+                            .child(Tab::new().label("Schedule"))
+                            .child(Tab::new().label("Shopping List"))
+                            .child(Tab::new().label("Pantry"))
+                            .child(Tab::new().label("Analytics")),
                     ),
             )
             // Active Tab Content View

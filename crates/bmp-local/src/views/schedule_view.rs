@@ -1,5 +1,7 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::badge::Badge;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::ActiveTheme;
 
 pub struct ScheduleView {
@@ -37,15 +39,9 @@ impl Render for ScheduleView {
                             .child("Meal Scheduler & Calendar"),
                     )
                     .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(rgb(0x38bdf8))
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0x18181b))
-                            .child("+ Schedule Meal"),
+                        Button::new("btn-schedule-meal")
+                            .primary()
+                            .label("+ Schedule Meal"),
                     ),
             )
             .child(
@@ -64,14 +60,15 @@ impl Render for ScheduleView {
                         div()
                             .flex()
                             .justify_between()
+                            .items_center()
                             .p_3()
                             .rounded_md()
                             .bg(cx.theme().muted)
                             .text_sm()
                             .text_color(cx.theme().foreground)
                             .child(div().font_weight(FontWeight::BOLD).child(format!("Meal ID: {}", m.id)))
-                            .child(div().text_color(rgb(0x10b981)).child(format!("People: {}", m.people)))
-                            .child(div().text_color(rgb(0x38bdf8)).child(status_str))
+                            .child(div().child(Badge::new().child(format!("People: {}", m.people))))
+                            .child(div().child(Badge::new().child(status_str)))
                     })),
             )
     }

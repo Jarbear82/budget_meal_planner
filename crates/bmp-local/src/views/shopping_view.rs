@@ -1,5 +1,6 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::ActiveTheme;
 
 pub struct ShoppingView {
@@ -35,15 +36,9 @@ impl Render for ShoppingView {
                             .child("Shopping List & In-Store Checklist"),
                     )
                     .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(rgb(0x10b981))
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0x18181b))
-                            .child("Checkout & Reconcile Receipt"),
+                        Button::new("btn-reconcile-receipt")
+                            .primary()
+                            .label("Checkout & Reconcile Receipt"),
                     ),
             )
             .child(

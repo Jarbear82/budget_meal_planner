@@ -1,6 +1,7 @@
 use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::ActiveTheme;
 
 pub struct RecipesView {
@@ -42,15 +43,9 @@ impl Render for RecipesView {
                             .child("Recipes & Sub-Recipe Builder"),
                     )
                     .child(
-                        div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(rgb(0x10b981))
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0x18181b))
-                            .child("+ New Recipe"),
+                        Button::new("btn-new-recipe")
+                            .primary()
+                            .label("+ New Recipe"),
                     ),
             )
             .child(

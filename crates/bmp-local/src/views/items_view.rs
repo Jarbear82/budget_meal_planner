@@ -1,5 +1,8 @@
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::badge::Badge;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::tag::Tag;
 use gpui_component::ActiveTheme;
 
 pub struct ItemsView {
@@ -43,13 +46,15 @@ impl Render for ItemsView {
                     )
                     .child(
                         div()
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .text_xs()
-                            .text_color(cx.theme().foreground)
-                            .child(format!("Total Items: {}", items.len())),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Badge::new().child(format!("Total Items: {}", items.len())))
+                            .child(
+                                Button::new("btn-add-item")
+                                    .primary()
+                                    .label("+ Add Item"),
+                            ),
                     ),
             )
             .child(
@@ -108,14 +113,15 @@ impl Render for ItemsView {
                         div()
                             .flex()
                             .justify_between()
+                            .items_center()
                             .py_2()
                             .border_b_1()
                             .border_color(cx.theme().border)
                             .text_sm()
                             .text_color(cx.theme().foreground)
                             .child(div().w_1_4().font_weight(FontWeight::BOLD).child(item.name))
-                            .child(div().w_1_4().text_color(rgb(0x10b981)).child(density_str))
-                            .child(div().w_1_4().text_color(rgb(0x38bdf8)).child(mode_str))
+                            .child(div().w_1_4().child(Tag::new().child(density_str)))
+                            .child(div().w_1_4().child(Badge::new().child(mode_str)))
                             .child(div().w_1_4().text_color(cx.theme().muted_foreground).child(category_str))
                     })),
             )

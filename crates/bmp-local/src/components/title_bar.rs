@@ -1,5 +1,6 @@
-use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::badge::Badge;
+use gpui_component::switch::Switch;
 use gpui_component::{ActiveTheme, Theme, ThemeMode, TitleBar as ComponentTitleBar};
 
 pub struct TitleBar {
@@ -43,87 +44,28 @@ impl Render for TitleBar {
                                     .text_color(cx.theme().foreground)
                                     .child(self.title.clone()),
                             )
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(cx.theme().muted)
-                                    .text_xs()
-                                    .text_color(rgb(0x10b981))
-                                    .child(self.status_badge.clone()),
-                            ),
+                            .child(Badge::new().child(self.status_badge.clone())),
                     )
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_4()
-                            // Interactive Switch Toggle for Light / Dark Mode
+                            // Standard Switch component for Dark / Light Mode
                             .child(
-                                div()
-                                    .id("theme-switch-toggle")
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2p5()
-                                    .py_1()
-                                    .rounded_full()
-                                    .bg(cx.theme().muted)
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .on_click(cx.listener(move |_this, _, _window, cx| {
-                                        let new_mode = if cx.theme().mode.is_dark() {
-                                            ThemeMode::Light
-                                        } else {
+                                Switch::new("theme-mode-switch")
+                                    .checked(is_dark)
+                                    .label(if is_dark { "Dark Mode" } else { "Light Mode" })
+                                    .on_click(cx.listener(move |_this, checked, _window, cx| {
+                                        let new_mode = if *checked {
                                             ThemeMode::Dark
+                                        } else {
+                                            ThemeMode::Light
                                         };
                                         Theme::change(new_mode, None, cx);
-                                    }))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(if is_dark { cx.theme().foreground } else { cx.theme().muted_foreground })
-                                            .child("🌙"),
-                                    )
-                                    // Pill Track & Sliding Knob
-                                    .child(
-                                        div()
-                                            .w_8()
-                                            .h_4()
-                                            .rounded_full()
-                                            .bg(if is_dark { cx.theme().primary } else { cx.theme().accent })
-                                            .flex()
-                                            .items_center()
-                                            .px_0p5()
-                                            .child(
-                                                div()
-                                                    .w_3()
-                                                    .h_3()
-                                                    .rounded_full()
-                                                    .bg(cx.theme().background)
-                                                    .when(is_dark, |s| s.ml_auto()),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(if !is_dark { cx.theme().foreground } else { cx.theme().muted_foreground })
-                                            .child("☀️"),
-                                    ),
+                                    })),
                             )
-                            .child(
-                                div()
-                                    .px_2p5()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(cx.theme().muted)
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Offline Mode"),
-                            ),
+                            .child(Badge::new().child("Offline Mode")),
                     ),
             )
     }
