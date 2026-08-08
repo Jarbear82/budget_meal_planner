@@ -428,7 +428,7 @@ impl Storage {
 
     pub fn delete_recipe(&self, id: RecipeId) -> Result<()> {
         let conn = self.conn();
-        conn.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", [id.0.to_string()])?;
+        conn.execute("DELETE FROM ingredient_edges WHERE recipe_id = ?", [id.0.to_string()])?;
         conn.execute("DELETE FROM recipe_yields WHERE recipe_id = ?", [id.0.to_string()])?;
         conn.execute("DELETE FROM recipes WHERE id = ?", [id.0.to_string()])?;
         Ok(())
