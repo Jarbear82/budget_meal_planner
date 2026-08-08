@@ -18,6 +18,7 @@ pub struct BudgetMealPlannerApp {
     pub shopping_view: Entity<ShoppingView>,
     pub pantry_view: Entity<PantryView>,
     pub analytics_view: Entity<AnalyticsView>,
+    pub settings_view: Entity<SettingsView>,
     pub showcase_view: Entity<ComponentShowcaseView>,
 }
 
@@ -33,6 +34,7 @@ impl BudgetMealPlannerApp {
         let shopping_view = cx.new(|_| ShoppingView::new(services.clone()));
         let pantry_view = cx.new(|_| PantryView::new(services.clone()));
         let analytics_view = cx.new(|_| AnalyticsView::new(services.clone()));
+        let settings_view = cx.new(|cx| SettingsView::new(cx, services.clone()));
         let showcase_view = cx.new(|_| ComponentShowcaseView::new());
 
         Self {
@@ -45,6 +47,7 @@ impl BudgetMealPlannerApp {
             shopping_view,
             pantry_view,
             analytics_view,
+            settings_view,
             showcase_view,
         }
     }
@@ -86,6 +89,7 @@ impl Render for BudgetMealPlannerApp {
                             .child(Tab::new().label("Shopping List"))
                             .child(Tab::new().label("Pantry"))
                             .child(Tab::new().label("Analytics"))
+                            .child(Tab::new().label("Settings & Controls"))
                             .child(Tab::new().label("UI Primitives")),
                     ),
             )
@@ -98,6 +102,7 @@ impl Render for BudgetMealPlannerApp {
                     3 => self.shopping_view.clone().into_any_element(),
                     4 => self.pantry_view.clone().into_any_element(),
                     5 => self.analytics_view.clone().into_any_element(),
+                    6 => self.settings_view.clone().into_any_element(),
                     _ => self.showcase_view.clone().into_any_element(),
                 }),
             )
