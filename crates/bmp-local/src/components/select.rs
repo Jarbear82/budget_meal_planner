@@ -1,3 +1,5 @@
+pub use gpui_component::select::{Select as GpuiSelect, SelectState};
+
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::scroll::ScrollableElement;

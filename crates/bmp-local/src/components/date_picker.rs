@@ -1,3 +1,7 @@
+pub use gpui_component::date_picker::{
+    DatePicker as GpuiDatePicker, DatePickerEvent, DatePickerState,
+};
+
 use chrono::{Datelike, Local, NaiveDate};
 use gpui::prelude::*;
 use gpui::*;

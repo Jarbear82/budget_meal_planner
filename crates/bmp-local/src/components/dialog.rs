@@ -1,11 +1,12 @@
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::dialog::{DialogContent, DialogTitle};
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::ActiveTheme;
 use std::sync::Arc;
 
-/// A reusable Modal Dialog container component.
+/// A reusable Modal Dialog container component built on native gpui_component dialog elements.
 #[derive(IntoElement)]
 pub struct Dialog {
     id: ElementId,
@@ -96,7 +97,7 @@ impl RenderOnce for Dialog {
                     }),
             )
             .child(
-                // Modal Window Box
+                // Modal Window Box built with DialogContent & DialogTitle
                 div()
                     .id("dialog-content-box")
                     .relative()
@@ -110,7 +111,7 @@ impl RenderOnce for Dialog {
                     .shadow_lg()
                     .flex()
                     .flex_col()
-                    // Header Section
+                    // Header Section with native DialogTitle
                     .child(
                         div()
                             .flex()
@@ -124,13 +125,7 @@ impl RenderOnce for Dialog {
                                     .flex()
                                     .flex_col()
                                     .gap_0p5()
-                                    .child(
-                                        div()
-                                            .text_lg()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(cx.theme().foreground)
-                                            .child(self.title),
-                                    )
+                                    .child(DialogTitle::new().child(self.title))
                                     .when_some(self.subtitle, |this, sub| {
                                         this.child(
                                             div()
@@ -151,16 +146,18 @@ impl RenderOnce for Dialog {
                                     }),
                             ),
                     )
-                    // Body Content
+                    // Body Content wrapped in DialogContent
                     .child(
-                        div()
-                            .p_5()
-                            .flex()
-                            .flex_col()
-                            .gap_4()
-                            .max_h_96()
-                            .overflow_y_scrollbar()
-                            .children(self.children),
+                        DialogContent::new().child(
+                            div()
+                                .p_5()
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .max_h_96()
+                                .overflow_y_scrollbar()
+                                .children(self.children),
+                        ),
                     )
                     // Footer Actions
                     .when(!self.footer_actions.is_empty(), |this| {

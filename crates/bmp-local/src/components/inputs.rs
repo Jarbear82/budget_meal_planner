@@ -1,10 +1,13 @@
+pub use gpui_component::input::{Input, InputState};
+
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-/// A clean, styled Form Input component for text entry.
+/// FormInput legacy view wrapper utilizing gpui_component Input styling.
 #[derive(IntoElement)]
 pub struct FormInput {
     id: ElementId,
@@ -147,7 +150,7 @@ impl RenderOnce for FormInput {
     }
 }
 
-/// A specialized Numeric Input component with step buttons (+/-) and optional unit suffix.
+/// A specialized Numeric Input component with step buttons (+/-) built with native gpui_component Button primitives.
 #[derive(IntoElement)]
 pub struct NumberInput {
     id: ElementId,
@@ -260,15 +263,9 @@ impl RenderOnce for NumberInput {
                     .bg(cx.theme().background)
                     // Decrement button
                     .child(
-                        div()
-                            .id("btn-dec")
-                            .px_3()
-                            .py_1_5()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(cx.theme().muted))
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(cx.theme().foreground)
+                        Button::new("btn-number-dec")
+                            .secondary()
+                            .label("-")
                             .on_click(move |_event, window, cx| {
                                 let next_val = val - step;
                                 if let Some(m) = min_val {
@@ -279,8 +276,7 @@ impl RenderOnce for NumberInput {
                                 if let Some(ref cb) = on_dec {
                                     cb(&next_val, window, cx);
                                 }
-                            })
-                            .child("-"),
+                            }),
                     )
                     // Value & Unit display
                     .child(
@@ -306,15 +302,9 @@ impl RenderOnce for NumberInput {
                     )
                     // Increment button
                     .child(
-                        div()
-                            .id("btn-inc")
-                            .px_3()
-                            .py_1_5()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(cx.theme().muted))
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(cx.theme().foreground)
+                        Button::new("btn-number-inc")
+                            .secondary()
+                            .label("+")
                             .on_click(move |_event, window, cx| {
                                 let next_val = val + step;
                                 if let Some(m) = max_val {
@@ -325,10 +315,8 @@ impl RenderOnce for NumberInput {
                                 if let Some(ref cb) = on_inc {
                                     cb(&next_val, window, cx);
                                 }
-                            })
-                            .child("+"),
+                            }),
                     ),
             )
     }
 }
-
