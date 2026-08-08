@@ -7,6 +7,7 @@ use gpui::*;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
 use gpui_component::tag::Tag;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
@@ -207,106 +208,97 @@ impl Render for PantryView {
                     .flex_1()
                     .overflow_y_scrollbar()
                     .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .pb_2()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(cx.theme().muted_foreground)
-                            .child(div().w_1_4().child("Item Name"))
-                            .child(div().w_1_4().child("Available Stock Quantity"))
-                            .child(div().w_1_4().child("Expiration Status"))
-                            .child(div().w_1_4().child("Quick Adjust & Delete")),
-                    )
-                    .children(entries.into_iter().map(|entry| {
-                        let entry_id = entry.id;
-                        let item_name = items
-                            .iter()
-                            .find(|i| i.id == entry.item_id)
-                            .map(|i| i.name.clone())
-                            .unwrap_or_else(|| "Unknown Item".to_string());
+                        Table::new()
+                            .child(
+                                TableHeader::new()
+                                    .child(TableHead::new().child("Item Name"))
+                                    .child(TableHead::new().child("Available Stock Quantity"))
+                                    .child(TableHead::new().child("Expiration Status"))
+                                    .child(TableHead::new().child("Quick Adjust & Delete")),
+                            )
+                            .child(
+                                TableBody::new().children(entries.into_iter().map(|entry| {
+                                    let entry_id = entry.id;
+                                    let item_name = items
+                                        .iter()
+                                        .find(|i| i.id == entry.item_id)
+                                        .map(|i| i.name.clone())
+                                        .unwrap_or_else(|| "Unknown Item".to_string());
 
-                        let (exp_str, exp_status) = match entry.expiration {
-                            Some(exp) => {
-                                let days = (exp - today).num_days();
-                                if days < 0 {
-                                    (format!("Expired ({})", exp), "Expired")
-                                } else if days <= 3 {
-                                    (format!("Expires in {}d ({})", days, exp), "Expires Soon")
-                                } else {
-                                    (format!("Expires {}", exp), "Fresh")
-                                }
-                            }
-                            None => ("No Expiration Date".to_string(), "Fresh"),
-                        };
+                                    let (exp_str, exp_status) = match entry.expiration {
+                                        Some(exp) => {
+                                            let days = (exp - today).num_days();
+                                            if days < 0 {
+                                                (format!("Expired ({})", exp), "Expired")
+                                            } else if days <= 3 {
+                                                (format!("Expires in {}d ({})", days, exp), "Expires Soon")
+                                            } else {
+                                                (format!("Expires {}", exp), "Fresh")
+                                            }
+                                        }
+                                        None => ("No Expiration Date".to_string(), "Fresh"),
+                                    };
 
-                        let card_id = format!("pantry-entry-{}", entry_id);
-                        div()
-                            .id(ElementId::from(card_id))
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .py_3()
-                            .px_2()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .child(
-                                div()
-                                    .w_1_4()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child(item_name),
-                            )
-                            .child(
-                                div()
-                                    .w_1_4()
-                                    .child(Tag::new().child(format!("{} {}", entry.quantity.amount.normalize(), entry.quantity.unit))),
-                            )
-                            .child(
-                                div()
-                                    .w_1_4()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(Badge::new().child(exp_status))
-                                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(exp_str)),
-                            )
-                            .child(
-                                div()
-                                    .w_1_4()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        Button::new(format!("btn-dec-pantry-{}", entry_id))
-                                            .secondary()
-                                            .label("- 100")
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.update_quantity(entry_id, dec!(-100), cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(format!("btn-inc-pantry-{}", entry_id))
-                                            .secondary()
-                                            .label("+ 100")
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.update_quantity(entry_id, dec!(100), cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(format!("btn-del-pantry-{}", entry_id))
-                                            .ghost()
-                                            .label("🗑")
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.delete_entry(entry_id, cx);
-                                            })),
-                                    ),
-                            )
-                    })),
+                                    TableRow::new()
+                                        .child(
+                                            TableCell::new().child(
+                                                div()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_sm()
+                                                    .text_color(cx.theme().foreground)
+                                                    .child(item_name),
+                                            ),
+                                        )
+                                        .child(
+                                            TableCell::new().child(
+                                                Tag::new().child(format!("{} {}", entry.quantity.amount.normalize(), entry.quantity.unit)),
+                                            ),
+                                        )
+                                        .child(
+                                            TableCell::new().child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(Badge::new().child(exp_status))
+                                                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(exp_str)),
+                                            ),
+                                        )
+                                        .child(
+                                            TableCell::new().child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        Button::new(format!("btn-dec-pantry-{}", entry_id))
+                                                            .secondary()
+                                                            .label("- 100")
+                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                                this.update_quantity(entry_id, dec!(-100), cx);
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        Button::new(format!("btn-inc-pantry-{}", entry_id))
+                                                            .secondary()
+                                                            .label("+ 100")
+                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                                this.update_quantity(entry_id, dec!(100), cx);
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        Button::new(format!("btn-del-pantry-{}", entry_id))
+                                                            .ghost()
+                                                            .label("🗑")
+                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                                this.delete_entry(entry_id, cx);
+                                                            })),
+                                                    ),
+                                            ),
+                                        )
+                                })),
+                            ),
+                    ),
             )
             // Add Stock Modal Dialog
             .child(

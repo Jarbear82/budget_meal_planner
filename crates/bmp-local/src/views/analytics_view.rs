@@ -2,8 +2,8 @@ use crate::components::*;
 use bmp_services::AppServices;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::badge::Badge;
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
 use gpui_component::tag::Tag;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
@@ -187,66 +187,55 @@ impl Render for AnalyticsView {
                     .flex_1()
                     .overflow_y_scrollbar()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .pb_2()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
+                        Table::new()
                             .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(cx.theme().foreground)
-                                    .child("RECORDED SHOPPING RECEIPTS"),
+                                TableHeader::new()
+                                    .child(TableHead::new().child("Receipt Details"))
+                                    .child(TableHead::new().child("Store"))
+                                    .child(TableHead::new().child("Actual Amount Spent ($)")),
                             )
-                            .child(Badge::new().child(format!("Receipts Count: {}", receipts.len()))),
-                    )
-                    .children(receipts.into_iter().map(|(id_str, store_id_opt, total, dt)| {
-                        let store_name = store_id_opt
-                            .and_then(|sid| stores.iter().find(|s| s.id == sid).map(|s| s.name.clone()))
-                            .unwrap_or_else(|| "General Store / Unspecified".to_string());
+                            .child(
+                                TableBody::new().children(receipts.into_iter().map(|(id_str, store_id_opt, total, dt)| {
+                                    let store_name = store_id_opt
+                                        .and_then(|sid| stores.iter().find(|s| s.id == sid).map(|s| s.name.clone()))
+                                        .unwrap_or_else(|| "General Store / Unspecified".to_string());
 
-                        let date_fmt = dt.format("%Y-%m-%d %H:%M").to_string();
+                                    let date_fmt = dt.format("%Y-%m-%d %H:%M").to_string();
 
-                        let receipt_card_id = format!("receipt-card-{}", id_str);
-                        div()
-                            .id(ElementId::from(receipt_card_id))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .py_3()
-                            .px_2()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_sm()
-                                            .text_color(cx.theme().foreground)
-                                            .child(format!("Receipt #{}", id_str)),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(format!("📅 Recorded on: {}", date_fmt)),
-                                    ),
-                            )
-                            .child(Tag::new().child(store_name))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_base()
-                                    .text_color(cx.theme().foreground)
-                                    .child(format!("${}", total.normalize())),
-                            )
-                    })),
+                                    TableRow::new()
+                                        .child(
+                                            TableCell::new().child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .child(
+                                                        div()
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(format!("Receipt #{}", id_str)),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .child(format!("Recorded on: {}", date_fmt)),
+                                                    ),
+                                            ),
+                                        )
+                                        .child(TableCell::new().child(Tag::new().child(store_name)))
+                                        .child(
+                                            TableCell::new().child(
+                                                div()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_base()
+                                                    .text_color(cx.theme().foreground)
+                                                    .child(format!("${}", total.normalize())),
+                                            ),
+                                        )
+                                })),
+                            ),
+                    ),
             )
     }
 }

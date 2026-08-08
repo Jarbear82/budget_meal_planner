@@ -7,7 +7,7 @@ use gpui::*;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::scroll::ScrollableElement;
+use gpui_component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
 use gpui_component::tag::Tag;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
@@ -409,128 +409,96 @@ impl Render for ShoppingView {
                             .border_1()
                             .border_color(cx.theme().border)
                             .rounded_lg()
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_between()
-                                    .pb_2()
-                                    .border_b_1()
-                                    .border_color(cx.theme().border)
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(div().w_1_12().child("Buy"))
-                                    .child(div().w_1_4().child("Item Name"))
-                                    .child(div().w_1_4().child("Required vs Package Ceiling"))
-                                    .child(div().w_1_6().child("Store"))
-                                    .child(div().w_1_6().child("Line Total ($)")),
-                            )
                             .when(has_list, |this| {
                                 let list = self.active_list.as_ref().unwrap();
                                 let line_items = list.items.clone();
 
                                 this.child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .overflow_y_scrollbar()
-                                        .children(line_items.into_iter().enumerate().map(|(idx, line)| {
-                                            let is_checked = line.is_checked;
-                                            let store_name = stores
-                                                .iter()
-                                                .find(|s| s.id == line.store_id)
-                                                .map(|s| s.name.clone())
-                                                .unwrap_or_else(|| "Store".to_string());
+                                    Table::new()
+                                        .child(
+                                            TableHeader::new()
+                                                .child(TableHead::new().child("Buy"))
+                                                .child(TableHead::new().child("Item Name"))
+                                                .child(TableHead::new().child("Required vs Package Ceiling"))
+                                                .child(TableHead::new().child("Store"))
+                                                .child(TableHead::new().child("Line Total ($)")),
+                                        )
+                                        .child(
+                                            TableBody::new().children(line_items.into_iter().enumerate().map(|(idx, line)| {
+                                                let is_checked = line.is_checked;
+                                                let store_name = stores
+                                                    .iter()
+                                                    .find(|s| s.id == line.store_id)
+                                                    .map(|s| s.name.clone())
+                                                    .unwrap_or_else(|| "Store".to_string());
 
-                                            let mode_str = format!("{:?}", line.purchase_mode);
+                                                let mode_str = format!("{:?}", line.purchase_mode);
 
-                                            let line_id = format!("shopping-line-{}", idx);
-                                            div()
-                                                .id(ElementId::from(line_id))
-                                                .flex()
-                                                .justify_between()
-                                                .items_center()
-                                                .py_2()
-                                                .px_2()
-                                                .border_b_1()
-                                                .border_color(cx.theme().border)
-                                                .rounded_md()
-                                                .bg(if is_checked {
-                                                    cx.theme().muted
-                                                } else {
-                                                    cx.theme().background
-                                                })
-                                                // Checkbox
-                                                .child(
-                                                    div()
-                                                        .w_1_12()
-                                                        .child(
+                                                TableRow::new()
+                                                    .child(
+                                                        TableCell::new().child(
                                                             Checkbox::new(format!("cb-line-{}", idx))
                                                                 .checked(is_checked)
                                                                 .on_click(cx.listener(move |this, _checked, _window, cx| {
                                                                     this.toggle_item_checked(idx, cx);
                                                                 })),
                                                         ),
-                                                )
-                                                // Item Name & Mode
-                                                .child(
-                                                    div()
-                                                        .w_1_4()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .child(
+                                                    )
+                                                    .child(
+                                                        TableCell::new().child(
+                                                            div()
+                                                                .flex()
+                                                                .flex_col()
+                                                                .child(
+                                                                    div()
+                                                                        .font_weight(FontWeight::BOLD)
+                                                                        .text_sm()
+                                                                        .text_color(if is_checked {
+                                                                            cx.theme().muted_foreground
+                                                                        } else {
+                                                                            cx.theme().foreground
+                                                                        })
+                                                                        .child(line.item_name.clone()),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(cx.theme().muted_foreground)
+                                                                        .child(mode_str),
+                                                                ),
+                                                        ),
+                                                    )
+                                                    .child(
+                                                        TableCell::new().child(
+                                                            div()
+                                                                .flex()
+                                                                .flex_col()
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                                        .child(format!("Req: {} {}", line.required_qty.amount, line.required_qty.unit)),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(cx.theme().muted_foreground)
+                                                                        .child(format!("Buy {}x ({} {})", line.package_count, line.package_qty.amount, line.package_qty.unit)),
+                                                                ),
+                                                        ),
+                                                    )
+                                                    .child(TableCell::new().child(Tag::new().child(store_name)))
+                                                    .child(
+                                                        TableCell::new().child(
                                                             div()
                                                                 .font_weight(FontWeight::BOLD)
                                                                 .text_sm()
-                                                                .text_color(if is_checked {
-                                                                    cx.theme().muted_foreground
-                                                                } else {
-                                                                    cx.theme().foreground
-                                                                })
-                                                                .child(line.item_name.clone()),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(cx.theme().muted_foreground)
-                                                                .child(mode_str),
+                                                                .text_color(cx.theme().foreground)
+                                                                .child(format!("${}", line.line_total.normalize())),
                                                         ),
-                                                )
-                                                // Quantities & Package Ceiling Calculation
-                                                .child(
-                                                    div()
-                                                        .w_1_4()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .font_weight(FontWeight::SEMIBOLD)
-                                                                .child(format!("Req: {} {}", line.required_qty.amount, line.required_qty.unit)),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(cx.theme().muted_foreground)
-                                                                .child(format!("Buy {}x ({} {})", line.package_count, line.package_qty.amount, line.package_qty.unit)),
-                                                        ),
-                                                )
-                                                // Store Name
-                                                .child(
-                                                    div()
-                                                        .w_1_6()
-                                                        .child(Tag::new().child(store_name)),
-                                                )
-                                                // Price Line Total
-                                                .child(
-                                                    div()
-                                                        .w_1_6()
-                                                        .font_weight(FontWeight::BOLD)
-                                                        .text_sm()
-                                                        .text_color(cx.theme().foreground)
-                                                        .child(format!("${}", line.line_total.normalize())),
-                                                )
-                                        })),
+                                                    )
+                                            })),
+                                        ),
                                 )
                             })
                             .when(!has_list, |this| {
@@ -544,9 +512,9 @@ impl Render for ShoppingView {
                                         .text_center()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("Click '🔄 Generate List' above to calculate consolidated shopping requirements based on your scheduled meals and pantry stock."),
+                                        .child("Click 'Generate List' above to calculate consolidated shopping requirements based on your scheduled meals and pantry stock."),
                                 )
-                            }),
+                            })
                     )
                     // Summary Side Panel Card
                     .child(
@@ -596,8 +564,8 @@ impl Render for ShoppingView {
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.open_receipt_modal(cx);
                                     })),
-                            ),
-                    ),
+                            )
+                    )
             )
             // Receipt Reconciliation Modal Dialog
             .child(
