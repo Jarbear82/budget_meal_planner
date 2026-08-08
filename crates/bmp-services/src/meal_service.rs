@@ -29,6 +29,10 @@ impl MealService {
         Ok(meal)
     }
 
+    pub fn list_pre_planned_meals(&self) -> Result<Vec<PrePlannedMeal>, String> {
+        self.storage.get_all_pre_planned_meals().map_err(|e| e.to_string())
+    }
+
     pub fn list_scheduled_meals(&self) -> Result<Vec<ScheduledMeal>, String> {
         self.storage.get_all_scheduled_meals().map_err(|e| e.to_string())
     }

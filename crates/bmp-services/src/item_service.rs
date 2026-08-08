@@ -83,4 +83,12 @@ impl ItemService {
         }
         Ok(())
     }
+
+    pub fn get_packages_for_item(&self, item_id: ItemId) -> Result<Vec<Package>, String> {
+        self.storage.get_packages_for_item(item_id).map_err(|e| e.to_string())
+    }
+
+    pub fn delete_package(&self, package_id: PackageId) -> Result<(), String> {
+        self.storage.delete_package(package_id).map_err(|e| e.to_string())
+    }
 }

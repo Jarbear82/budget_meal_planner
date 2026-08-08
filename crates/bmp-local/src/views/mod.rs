@@ -1,4 +1,5 @@
 pub mod analytics_view;
+pub mod component_showcase_view;
 pub mod items_view;
 pub mod pantry_view;
 pub mod recipes_view;
@@ -11,6 +12,7 @@ pub mod modals {
 }
 
 pub use analytics_view::*;
+pub use component_showcase_view::*;
 pub use items_view::*;
 pub use pantry_view::*;
 pub use recipes_view::*;

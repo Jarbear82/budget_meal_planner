@@ -28,6 +28,10 @@ impl RecipeService {
         self.storage.get_all_recipes().map_err(|e| e.to_string())
     }
 
+    pub fn delete_recipe(&self, recipe_id: RecipeId) -> Result<(), String> {
+        self.storage.delete_recipe(recipe_id).map_err(|e| e.to_string())
+    }
+
     pub fn estimate_cost(&self, recipe_id: RecipeId) -> Result<RecipeCost, String> {
         let recipes = self.list_recipes()?;
         let recipes_map: HashMap<RecipeId, Recipe> = recipes.iter().map(|r| (r.id, r.clone())).collect();

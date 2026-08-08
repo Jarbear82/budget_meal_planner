@@ -280,6 +280,12 @@ impl Storage {
         Ok(packages)
     }
 
+    pub fn delete_package(&self, package_id: PackageId) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM packages WHERE id = ?", [package_id.0.to_string()])?;
+        Ok(())
+    }
+
     // --- PANTRY CRUD ---
 
     pub fn insert_pantry_entry(&self, entry: &PantryEntry) -> Result<()> {
@@ -417,6 +423,14 @@ impl Storage {
         }
 
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_recipe(&self, id: RecipeId) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", [id.0.to_string()])?;
+        conn.execute("DELETE FROM recipe_yields WHERE recipe_id = ?", [id.0.to_string()])?;
+        conn.execute("DELETE FROM recipes WHERE id = ?", [id.0.to_string()])?;
         Ok(())
     }
 

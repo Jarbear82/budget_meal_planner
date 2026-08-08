@@ -86,4 +86,8 @@ impl PantryService {
         }
         Ok(())
     }
+
+    pub fn delete_pantry_entry(&self, entry_id: PantryEntryId) -> Result<(), String> {
+        self.storage.delete_pantry_entry(entry_id).map_err(|e| e.to_string())
+    }
 }
