@@ -3,6 +3,7 @@ use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
@@ -452,18 +453,7 @@ impl Render for ItemsView {
                     .p_3()
                     .bg(cx.theme().muted)
                     .rounded_lg()
-                    .child(
-                        div()
-                            .flex_1()
-                            .p_2()
-                            .bg(cx.theme().background)
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .rounded_md()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("Status: {}", self.status_msg)),
-                    ),
+                    .child(Alert::new("items-status-alert", format!("Status: {}", self.status_msg))),
             )
             // Split Matrix View (Items Table + Selected Item Details Drawer)
             .child(

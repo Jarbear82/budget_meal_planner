@@ -3,6 +3,7 @@ use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
@@ -417,15 +418,7 @@ impl Render for RecipesView {
                     ),
             )
             // Status Banner
-            .child(
-                div()
-                    .p_3()
-                    .bg(cx.theme().muted)
-                    .rounded_lg()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("Status: {}", self.status_msg)),
-            )
+            .child(Alert::new("recipes-status-alert", format!("Status: {}", self.status_msg)))
             // Split Master-Detail View
             .child(
                 div()

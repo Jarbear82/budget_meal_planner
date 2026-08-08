@@ -4,6 +4,7 @@ use bmp_common_ingredients::seed_common_ingredients;
 use bmp_services::AppServices;
 use bmp_storage::Storage;
 use gpui::*;
+use gpui_component::status_bar::StatusBar;
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::ActiveTheme;
 
@@ -61,6 +62,16 @@ impl BudgetMealPlannerApp {
 impl Render for BudgetMealPlannerApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
+        let tab_name = match active_tab {
+            0 => "Items & Packages",
+            1 => "Recipes",
+            2 => "Schedule",
+            3 => "Shopping List",
+            4 => "Pantry",
+            5 => "Analytics",
+            6 => "Settings & Controls",
+            _ => "UI Primitives",
+        };
 
         div()
             .flex()
@@ -105,6 +116,13 @@ impl Render for BudgetMealPlannerApp {
                     6 => self.settings_view.clone().into_any_element(),
                     _ => self.showcase_view.clone().into_any_element(),
                 }),
+            )
+            // Native gpui_component::status_bar::StatusBar
+            .child(
+                StatusBar::new()
+                    .left("● SQLite Storage: In-Memory (Connected)")
+                    .child(format!("Active Context: {}", tab_name))
+                    .right("v5.0 Local | 100% On-Device"),
             )
     }
 }

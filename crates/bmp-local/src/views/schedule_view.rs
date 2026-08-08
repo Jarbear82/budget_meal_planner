@@ -4,6 +4,7 @@ use bmp_services::AppServices;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
@@ -214,15 +215,7 @@ impl Render for ScheduleView {
                     ),
             )
             // Status Bar
-            .child(
-                div()
-                    .p_3()
-                    .bg(cx.theme().muted)
-                    .rounded_lg()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("Status: {}", self.status_msg)),
-            )
+            .child(Alert::new("schedule-status-alert", format!("Status: {}", self.status_msg)))
             // Scheduled Meals List
             .child(
                 div()

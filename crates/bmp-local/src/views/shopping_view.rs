@@ -4,6 +4,7 @@ use bmp_services::AppServices;
 use chrono::Utc;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
@@ -388,18 +389,7 @@ impl Render for ShoppingView {
                                     })),
                             ),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .p_2()
-                            .bg(cx.theme().background)
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .rounded_md()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("Status: {}", self.status_msg)),
-                    ),
+                    .child(Alert::new("shopping-status-alert", format!("Status: {}", self.status_msg))),
             )
             // Shopping List Main Pane + Summary Side Card
             .child(
