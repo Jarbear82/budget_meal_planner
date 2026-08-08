@@ -42,6 +42,10 @@ impl ItemService {
         self.storage.get_all_items().map_err(|e| e.to_string())
     }
 
+    pub fn get_item(&self, item_id: ItemId) -> Result<Option<Item>, String> {
+        self.storage.get_item(item_id).map_err(|e| e.to_string())
+    }
+
     pub fn list_stores(&self) -> Result<Vec<Store>, String> {
         self.storage.get_all_stores().map_err(|e| e.to_string())
     }

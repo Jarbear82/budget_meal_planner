@@ -4,6 +4,8 @@ use gpui::prelude::*;
 use gpui::*;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
+use gpui_component::WindowExt;
 use gpui_component::ActiveTheme;
 use rust_decimal_macros::dec;
 
@@ -15,7 +17,6 @@ pub struct ComponentShowcaseView {
     pub checkbox_checked: bool,
     pub selected_date: NaiveDate,
     pub datepicker_is_open: bool,
-    pub dialog_is_open: bool,
     pub status_msg: String,
 }
 
@@ -29,7 +30,6 @@ impl ComponentShowcaseView {
             checkbox_checked: true,
             selected_date: Local::now().date_naive(),
             datepicker_is_open: false,
-            dialog_is_open: false,
             status_msg: "Phase 1 UI Primitives Ready".to_string(),
         }
     }
@@ -51,7 +51,6 @@ impl Render for ComponentShowcaseView {
         let _cb_checked = self.checkbox_checked;
         let sel_date = self.selected_date;
         let date_open = self.datepicker_is_open;
-        let dlg_open = self.dialog_is_open;
 
         div()
             .flex()
@@ -236,56 +235,64 @@ impl Render for ComponentShowcaseView {
                                 Button::new("btn-open-dialog-demo")
                                     .primary()
                                     .label("Open Interactive Modal Dialog")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.dialog_is_open = true;
-                                        cx.notify();
+                                    .on_click(cx.listener(|_this, _event, window, cx| {
+                                        let view = cx.entity().clone();
+                                        window.open_dialog(cx, move |dialog, _, _| {
+                                            let view_confirm = view.clone();
+                                            dialog
+                                                .w(px(500.))
+                                                .content(move |content, _, _| {
+                                                    let v_confirm = view_confirm.clone();
+                                                    content
+                                                        .child(
+                                                            DialogHeader::new()
+                                                                .child(DialogTitle::new().child("Make Recipe Configuration"))
+                                                                .child(DialogDescription::new().child("Configure batches, yields, and optional substitutes before batching")),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .py_4()
+                                                                .flex()
+                                                                .flex_col()
+                                                                .gap_3()
+                                                                .child(
+                                                                    FormInput::new("modal-input-batches")
+                                                                        .label("Number of Batches")
+                                                                        .value("2.0"),
+                                                                )
+                                                                .child(
+                                                                    Checkbox::new("modal-cb-include-optionals")
+                                                                        .label("Include optional ingredients")
+                                                                        .checked(true),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            DialogFooter::new()
+                                                                .child(
+                                                                    Button::new("btn-modal-cancel")
+                                                                        .secondary()
+                                                                        .label("Cancel")
+                                                                        .on_click(|_, window, cx| {
+                                                                            window.close_dialog(cx);
+                                                                        }),
+                                                                )
+                                                                .child(
+                                                                    Button::new("btn-modal-confirm")
+                                                                        .primary()
+                                                                        .label("Produce Batches into Pantry")
+                                                                        .on_click(move |_, window, cx| {
+                                                                            v_confirm.update(cx, |this, cx| {
+                                                                                this.status_msg = "Successfully executed Make Recipe production!".to_string();
+                                                                                cx.notify();
+                                                                            });
+                                                                            window.close_dialog(cx);
+                                                                        }),
+                                                                ),
+                                                        )
+                                                })
+                                        });
                                     })),
                             ),
-                    ),
-            )
-            // Interactive Modal Dialog Instance
-            .child(
-                Dialog::new("demo-modal-dialog", "Make Recipe Configuration")
-                    .subtitle("Configure batches, yields, and optional substitutes before batching")
-                    .is_open(dlg_open)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.dialog_is_open = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .child(
-                                FormInput::new("modal-input-batches")
-                                    .label("Number of Batches")
-                                    .value("2.0"),
-                            )
-                            .child(
-                                Checkbox::new("modal-cb-include-optionals")
-                                    .label("Include optional ingredients")
-                                    .checked(true),
-                            ),
-                    )
-                    .footer_action(
-                        Button::new("btn-modal-cancel")
-                            .secondary()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.dialog_is_open = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-modal-confirm")
-                            .primary()
-                            .label("Produce Batches into Pantry")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.dialog_is_open = false;
-                                this.status_msg = "Successfully executed Make Recipe production!".to_string();
-                                cx.notify();
-                            })),
                     ),
             )
     }

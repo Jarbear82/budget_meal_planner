@@ -7,8 +7,10 @@ use gpui::*;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::tag::Tag;
+use gpui_component::WindowExt;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -18,9 +20,8 @@ pub struct ScheduleView {
     pub services: AppServices,
     pub status_msg: String,
 
-    // Modals
-    pub show_schedule_modal: bool,
-    pub show_consumed_modal: bool,
+    pub cached_scheduled_meals: Vec<ScheduledMeal>,
+    pub cached_recipes: Vec<Recipe>,
 
     // Schedule form state
     pub form_meal_type: String, // "recipe", "pre_planned", "restaurant"
@@ -37,12 +38,12 @@ pub struct ScheduleView {
 
 impl ScheduleView {
     pub fn new(services: AppServices) -> Self {
-        Self {
+        let mut view = Self {
             services,
             status_msg: "Schedule manager ready".to_string(),
 
-            show_schedule_modal: false,
-            show_consumed_modal: false,
+            cached_scheduled_meals: Vec::new(),
+            cached_recipes: Vec::new(),
 
             form_meal_type: "recipe".to_string(),
             form_recipe_id: None,
@@ -53,17 +54,215 @@ impl ScheduleView {
             form_date: Local::now().date_naive(),
 
             target_meal_id: None,
+        };
+        view.reload_data();
+        view
+    }
+
+    pub fn reload_data(&mut self) {
+        self.cached_scheduled_meals = self.services.meals.list_scheduled_meals().unwrap_or_default();
+        self.cached_recipes = self.services.recipes.list_recipes().unwrap_or_default();
+
+        if let Ok(pending) = self.services.notification.check_pending_notifications(Utc::now()) {
+            if !pending.is_empty() {
+                self.status_msg = format!(
+                    "🔔 Alert: You have {} scheduled meal(s) past 30-min window awaiting consumption confirmation!",
+                    pending.len()
+                );
+            }
         }
     }
 
-    pub fn open_schedule_modal(&mut self, cx: &mut Context<Self>) {
-        let recipes = self.services.recipes.list_recipes().unwrap_or_default();
+    pub fn check_pending_alerts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.services.notification.check_pending_notifications(Utc::now()).unwrap_or_default();
+        if let Some(first_due) = pending.first() {
+            self.prompt_confirm_consumed(first_due.id, window, cx);
+        } else {
+            self.status_msg = "No pending meal consumption notifications due.".to_string();
+            cx.notify();
+        }
+    }
+
+    pub fn open_schedule_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let recipes = &self.cached_recipes;
         self.form_recipe_id = recipes.first().map(|r| r.id);
         self.form_meal_type = "recipe".to_string();
         self.form_people = 2;
         self.form_date = Local::now().date_naive();
-        self.show_schedule_modal = true;
-        cx.notify();
+
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let recipes = &view_read.cached_recipes;
+                    let recipe_options: Vec<SelectOption> = recipes
+                        .iter()
+                        .map(|r| SelectOption::new(r.id.0.to_string(), r.name.clone()))
+                        .collect();
+
+                    let meal_type_options = vec![
+                        SelectOption::new("recipe", "Recipe Meal"),
+                        SelectOption::new("pre_planned", "Pre-Planned Combo Meal"),
+                        SelectOption::new("restaurant", "Restaurant Dining / Takeout"),
+                    ];
+
+                    let form_meal_type = view_read.form_meal_type.clone();
+                    let form_recipe_id = view_read.form_recipe_id;
+                    let form_pre_planned_name = view_read.form_pre_planned_name.clone();
+                    let form_restaurant_name = view_read.form_restaurant_name.clone();
+                    let form_restaurant_cost = view_read.form_restaurant_cost;
+                    let form_people = view_read.form_people;
+                    let form_date = view_read.form_date;
+
+                    let v_type = view.clone();
+                    let v_recipe = view.clone();
+                    let v_cost = view.clone();
+                    let v_people = view.clone();
+                    let v_date = view.clone();
+                    let v_save = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child("Schedule New Meal"))
+                                .child(DialogDescription::new().child("Add a meal to your schedule and scale target people headcount")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    Select::new("select-meal-type", meal_type_options)
+                                        .label("Meal Source Category")
+                                        .selected_id(Some(form_meal_type.clone()))
+                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                            let id = opt.id.clone();
+                                            v_type.update(cx, |this, cx| {
+                                                this.form_meal_type = id;
+                                                cx.notify();
+                                            });
+                                        }),
+                                )
+                                .when(form_meal_type == "recipe", |this| {
+                                    this.child(
+                                        Select::new("select-schedule-recipe", recipe_options)
+                                            .label("Recipe")
+                                            .selected_id(form_recipe_id.map(|id| id.0.to_string()))
+                                            .on_select(move |opt: &SelectOption, _window, cx| {
+                                                if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
+                                                    v_recipe.update(cx, |this, cx| {
+                                                        this.form_recipe_id = Some(RecipeId(uuid));
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                })
+                                .when(form_meal_type == "pre_planned", |this| {
+                                    this.child(
+                                        FormInput::new("input-pre-planned-name")
+                                            .label("Pre-Planned Combo Meal Name")
+                                            .placeholder("e.g. Sunday Family Roast Dinner")
+                                            .value(form_pre_planned_name),
+                                    )
+                                })
+                                .when(form_meal_type == "restaurant", |this| {
+                                    this.child(
+                                        FormInput::new("input-restaurant-name")
+                                            .label("Restaurant / Takeout Name")
+                                            .placeholder("e.g. Olive Garden, Thai Bistro")
+                                            .value(form_restaurant_name),
+                                    )
+                                    .child(
+                                        NumberInput::new("input-restaurant-cost", form_restaurant_cost)
+                                            .label("Estimated Dining Cost ($)")
+                                            .step(dec!(5.00))
+                                            .unit("$")
+                                            .on_increment({
+                                                let v = v_cost.clone();
+                                                move |val, _window, cx| {
+                                                    v.update(cx, |this, cx| {
+                                                        this.form_restaurant_cost = *val;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                            .on_decrement({
+                                                let v = v_cost.clone();
+                                                move |val, _window, cx| {
+                                                    v.update(cx, |this, cx| {
+                                                        this.form_restaurant_cost = *val;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                })
+                                .child(
+                                    NumberInput::new("input-meal-people", Decimal::from(form_people))
+                                        .label("People Count (Headcount)")
+                                        .step(dec!(1))
+                                        .on_increment({
+                                            let v = v_people.clone();
+                                            move |val: &Decimal, _window, cx| {
+                                                let count = val.to_string().parse().unwrap_or(1);
+                                                v.update(cx, |this, cx| {
+                                                    this.form_people = count;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_people.clone();
+                                            move |val: &Decimal, _window, cx| {
+                                                let count = val.to_string().parse().unwrap_or(1);
+                                                v.update(cx, |this, cx| {
+                                                    this.form_people = count;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    DatePicker::new("dp-meal-date", form_date)
+                                        .label("Scheduled Date")
+                                        .on_change(move |date, _window, cx| {
+                                            v_date.update(cx, |this, cx| {
+                                                this.form_date = *date;
+                                                cx.notify();
+                                            });
+                                        }),
+                                ),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-schedule")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-save-schedule")
+                                        .primary()
+                                        .label("Schedule Meal")
+                                        .on_click(move |_, window, cx| {
+                                            v_save.update(cx, |this, cx| {
+                                                this.save_scheduled_meal(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn save_scheduled_meal(&mut self, cx: &mut Context<Self>) {
@@ -116,19 +315,60 @@ impl ScheduleView {
         match self.services.meals.schedule_meal(source, dt, self.form_people) {
             Ok(meal) => {
                 self.status_msg = format!("Scheduled meal for {} people on {}", meal.people, self.form_date);
-                self.show_schedule_modal = false;
             }
             Err(e) => {
                 self.status_msg = format!("Error scheduling meal: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
-    pub fn prompt_confirm_consumed(&mut self, meal_id: ScheduledMealId, cx: &mut Context<Self>) {
+    pub fn prompt_confirm_consumed(&mut self, meal_id: ScheduledMealId, window: &mut Window, cx: &mut Context<Self>) {
         self.target_meal_id = Some(meal_id);
-        self.show_consumed_modal = true;
-        cx.notify();
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view_confirm = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, _| {
+                    let v_confirm = view_confirm.clone();
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child("Confirm Meal Consumed"))
+                                .child(DialogDescription::new().child("Mark this scheduled meal as consumed and update pantry inventory")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .text_sm()
+                                .child("Are you sure you want to mark this meal as consumed? This will update the meal status and deduct required ingredients from your Pantry."),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-consumed")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-confirm-consumed-action")
+                                        .primary()
+                                        .label("Confirm & Deduct Stock")
+                                        .on_click(move |_, window, cx| {
+                                            v_confirm.update(cx, |this, cx| {
+                                                this.execute_confirm_consumed(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn execute_confirm_consumed(&mut self, cx: &mut Context<Self>) {
@@ -140,31 +380,20 @@ impl ScheduleView {
         match self.services.meals.confirm_meal_consumed(meal_id, Utc::now()) {
             Ok(_) => {
                 self.status_msg = "Confirmed meal consumed! Updated schedule & pantry.".to_string();
-                self.show_consumed_modal = false;
             }
             Err(e) => {
                 self.status_msg = format!("Error confirming consumed: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 }
 
 impl Render for ScheduleView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let scheduled_meals = self.services.meals.list_scheduled_meals().unwrap_or_default();
-        let recipes = self.services.recipes.list_recipes().unwrap_or_default();
-
-        let recipe_options: Vec<SelectOption> = recipes
-            .iter()
-            .map(|r| SelectOption::new(r.id.0.to_string(), r.name.clone()))
-            .collect();
-
-        let meal_type_options = vec![
-            SelectOption::new("recipe", "Recipe Meal"),
-            SelectOption::new("pre_planned", "Pre-Planned Combo Meal"),
-            SelectOption::new("restaurant", "Restaurant Dining / Takeout"),
-        ];
+        let scheduled_meals = self.cached_scheduled_meals.clone();
+        let recipes = self.cached_recipes.clone();
 
         div()
             .flex()
@@ -205,11 +434,19 @@ impl Render for ScheduleView {
                             .gap_2()
                             .child(Badge::new().child(format!("Scheduled Meals: {}", scheduled_meals.len())))
                             .child(
+                                Button::new("btn-check-pending-alerts")
+                                    .secondary()
+                                    .label("🔔 Pending Alerts")
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.check_pending_alerts(window, cx);
+                                    })),
+                            )
+                            .child(
                                 Button::new("btn-schedule-meal")
                                     .primary()
                                     .label("+ Schedule Meal")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.open_schedule_modal(cx);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.open_schedule_modal(window, cx);
                                     })),
                             ),
                     ),
@@ -298,146 +535,13 @@ impl Render for ScheduleView {
                                             Button::new(format!("btn-confirm-consumed-{}", meal_id))
                                                 .primary()
                                                 .label("Confirm Consumed")
-                                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                    this.prompt_confirm_consumed(meal_id, cx);
+                                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                                    this.prompt_confirm_consumed(meal_id, window, cx);
                                                 })),
                                         )
                                     }),
                             )
                     })),
-            )
-            // Schedule Meal Modal Dialog
-            .child(
-                Dialog::new("schedule-meal-modal", "Schedule New Meal")
-                    .subtitle("Add a meal to your schedule and scale target people headcount")
-                    .is_open(self.show_schedule_modal)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.show_schedule_modal = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        Select::new("select-meal-type", meal_type_options)
-                            .label("Meal Source Category")
-                            .selected_id(Some(self.form_meal_type.clone()))
-                            .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                this.form_meal_type = opt.id.clone();
-                                cx.notify();
-                            })),
-                    )
-                    .when(self.form_meal_type == "recipe", |this| {
-                        this.child(
-                            Select::new("select-schedule-recipe", recipe_options.clone())
-                                .label("Recipe")
-                                .selected_id(self.form_recipe_id.map(|id| id.0.to_string()))
-                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                    if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                        this.form_recipe_id = Some(RecipeId(uuid));
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .when(self.form_meal_type == "pre_planned", |this| {
-                        this.child(
-                            FormInput::new("input-pre-planned-name")
-                                .label("Pre-Planned Combo Meal Name")
-                                .placeholder("e.g. Sunday Family Roast Dinner")
-                                .value(self.form_pre_planned_name.clone()),
-                        )
-                    })
-                    .when(self.form_meal_type == "restaurant", |this| {
-                        this.child(
-                            FormInput::new("input-restaurant-name")
-                                .label("Restaurant / Takeout Name")
-                                .placeholder("e.g. Olive Garden, Thai Bistro")
-                                .value(self.form_restaurant_name.clone()),
-                        )
-                        .child(
-                            NumberInput::new("input-restaurant-cost", self.form_restaurant_cost)
-                                .label("Estimated Dining Cost ($)")
-                                .step(dec!(5.00))
-                                .unit("$")
-                                .on_increment(cx.listener(|this, val, _window, cx| {
-                                    this.form_restaurant_cost = *val;
-                                    cx.notify();
-                                }))
-                                .on_decrement(cx.listener(|this, val, _window, cx| {
-                                    this.form_restaurant_cost = *val;
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .child(
-                        NumberInput::new("input-meal-people", Decimal::from(self.form_people))
-                            .label("People Count (Headcount)")
-                            .step(dec!(1))
-                            .on_increment(cx.listener(|this, val: &Decimal, _window, cx| {
-                                this.form_people = val.to_string().parse().unwrap_or(1);
-                                cx.notify();
-                            }))
-                            .on_decrement(cx.listener(|this, val: &Decimal, _window, cx| {
-                                this.form_people = val.to_string().parse().unwrap_or(1);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        DatePicker::new("dp-meal-date", self.form_date)
-                            .label("Scheduled Date")
-                            .on_change(cx.listener(|this, date, _window, cx| {
-                                this.form_date = *date;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-cancel-schedule")
-                            .secondary()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.show_schedule_modal = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-save-schedule")
-                            .primary()
-                            .label("Schedule Meal")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.save_scheduled_meal(cx);
-                            })),
-                    ),
-            )
-            // Confirm Consumed Modal Dialog
-            .child(
-                Dialog::new("confirm-consumed-modal", "Confirm Meal Consumed")
-                    .subtitle("Mark this scheduled meal as consumed and update pantry inventory")
-                    .is_open(self.show_consumed_modal)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.show_consumed_modal = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .child("Are you sure you want to mark this meal as consumed? This will update the meal status and deduct required ingredients from your Pantry."),
-                    )
-                    .footer_action(
-                        Button::new("btn-cancel-consumed")
-                            .secondary()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.show_consumed_modal = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-confirm-consumed-action")
-                            .primary()
-                            .label("Confirm & Deduct Stock")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.execute_confirm_consumed(cx);
-                            })),
-                    ),
             )
     }
 }

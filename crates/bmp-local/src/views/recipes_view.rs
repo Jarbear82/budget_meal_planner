@@ -6,8 +6,10 @@ use gpui::*;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::tag::Tag;
+use gpui_component::WindowExt;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -19,11 +21,11 @@ pub struct RecipesView {
     pub search_query: String,
     pub status_msg: String,
 
-    pub selected_recipe_id: Option<RecipeId>,
+    pub cached_recipes: Vec<Recipe>,
+    pub cached_items: Vec<Item>,
+    pub cached_cost: Option<RecipeCost>,
 
-    // Modals
-    pub show_recipe_modal: bool,
-    pub show_make_modal: bool,
+    pub selected_recipe_id: Option<RecipeId>,
 
     // Recipe Editor Form State
     pub editing_recipe_id: Option<RecipeId>,
@@ -55,14 +57,16 @@ pub struct RecipesView {
 
 impl RecipesView {
     pub fn new(services: AppServices) -> Self {
-        Self {
+        let mut view = Self {
             services,
             search_query: String::new(),
             status_msg: "Recipes manager ready".to_string(),
 
+            cached_recipes: Vec::new(),
+            cached_items: Vec::new(),
+            cached_cost: None,
+
             selected_recipe_id: None,
-            show_recipe_modal: false,
-            show_make_modal: false,
 
             editing_recipe_id: None,
             recipe_form_name: String::new(),
@@ -86,10 +90,22 @@ impl RecipesView {
             make_batches: dec!(1.0),
             make_selected_yield: None,
             make_status: String::new(),
+        };
+        view.reload_data();
+        view
+    }
+
+    pub fn reload_data(&mut self) {
+        self.cached_recipes = self.services.recipes.list_recipes().unwrap_or_default();
+        self.cached_items = self.services.items.list_items().unwrap_or_default();
+        if let Some(id) = self.selected_recipe_id {
+            self.cached_cost = self.services.recipes.estimate_cost(id).ok();
+        } else {
+            self.cached_cost = None;
         }
     }
 
-    pub fn open_create_recipe_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_create_recipe_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let items = self.services.items.list_items().unwrap_or_default();
         let first_item = items.first().map(|i| i.id);
 
@@ -112,11 +128,10 @@ impl RecipesView {
         self.yield_amount = dec!(1);
         self.yield_unit = Unit::Each;
 
-        self.show_recipe_modal = true;
-        cx.notify();
+        self.show_recipe_dialog(window, cx);
     }
 
-    pub fn open_edit_recipe_modal(&mut self, recipe: &Recipe, cx: &mut Context<Self>) {
+    pub fn open_edit_recipe_modal(&mut self, recipe: &Recipe, window: &mut Window, cx: &mut Context<Self>) {
         let items = self.services.items.list_items().unwrap_or_default();
         let first_item = items.first().map(|i| i.id);
 
@@ -139,8 +154,268 @@ impl RecipesView {
         self.yield_amount = dec!(1);
         self.yield_unit = Unit::Each;
 
-        self.show_recipe_modal = true;
-        cx.notify();
+        self.show_recipe_dialog(window, cx);
+    }
+
+    fn show_recipe_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(600.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let is_edit = view_read.editing_recipe_id.is_some();
+                    let title = if is_edit { "Edit Recipe Definition" } else { "Create New Recipe" };
+
+                    let items = view_read.services.items.list_items().unwrap_or_default();
+                    let item_options: Vec<SelectOption> = items
+                        .iter()
+                        .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
+                        .collect();
+
+                    let unit_options = vec![
+                        SelectOption::new("Gram", "Gram (g)"),
+                        SelectOption::new("Kilogram", "Kilogram (kg)"),
+                        SelectOption::new("Milliliter", "Milliliter (ml)"),
+                        SelectOption::new("Liter", "Liter (L)"),
+                        SelectOption::new("Cup", "Cup"),
+                        SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
+                        SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
+                        SelectOption::new("Ounce", "Ounce (oz)"),
+                        SelectOption::new("Pound", "Pound (lb)"),
+                        SelectOption::new("Each", "Each (count)"),
+                        SelectOption::new("Batch", "Batch"),
+                        SelectOption::new("Serving", "Serving"),
+                    ];
+
+                    let form_name = view_read.recipe_form_name.clone();
+                    let form_servings = view_read.recipe_form_servings;
+                    let form_instructions = view_read.recipe_form_instructions.clone();
+                    let form_ingredients = view_read.recipe_form_ingredients.clone();
+
+                    let ing_target_item_id = view_read.ing_target_item_id;
+                    let ing_amount = view_read.ing_amount;
+                    let ing_unit = view_read.ing_unit.clone();
+                    let ing_required = view_read.ing_required;
+
+                    let v_target = view.clone();
+                    let v_amount = view.clone();
+                    let v_unit = view.clone();
+                    let v_req = view.clone();
+                    let v_add_edge = view.clone();
+                    let v_rem_edge = view.clone();
+                    let v_save = view.clone();
+                    let v_servings = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child(title))
+                                .child(DialogDescription::new().child("Configure recipe yields, ingredient edges, required/optional flags, and instructions")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    FormInput::new("input-recipe-name")
+                                        .label("Recipe Name")
+                                        .placeholder("e.g. Homemade Bolognese Sauce")
+                                        .value(form_name),
+                                )
+                                .child(
+                                    NumberInput::new("input-recipe-servings", form_servings)
+                                        .label("Base Servings Count")
+                                        .step(dec!(1))
+                                        .on_increment({
+                                            let v = v_servings.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.recipe_form_servings = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_servings.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.recipe_form_servings = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    FormInput::new("input-recipe-instructions")
+                                        .label("Preparation Instructions")
+                                        .placeholder("e.g. Sauté onions, brown meat, simmer for 45 mins")
+                                        .value(form_instructions),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .p_3()
+                                        .bg(cx.theme().muted)
+                                        .rounded_md()
+                                        .child(div().text_xs().font_weight(FontWeight::BOLD).child("Add Ingredient Edge"))
+                                        .child(
+                                            Select::new("select-ing-item-target", item_options)
+                                                .label("Target Ingredient Item")
+                                                .selected_id(ing_target_item_id.map(|id| id.0.to_string()))
+                                                .on_select(move |opt: &SelectOption, _window, cx| {
+                                                    if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
+                                                        v_target.update(cx, |this, cx| {
+                                                            this.ing_target_item_id = Some(ItemId(uuid));
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .gap_2()
+                                                .child(
+                                                    NumberInput::new("input-ing-amount", ing_amount)
+                                                        .label("Amount")
+                                                        .step(dec!(10))
+                                                        .on_increment({
+                                                            let v = v_amount.clone();
+                                                            move |val, _window, cx| {
+                                                                v.update(cx, |this, cx| {
+                                                                    this.ing_amount = *val;
+                                                                    cx.notify();
+                                                                });
+                                                            }
+                                                        })
+                                                        .on_decrement({
+                                                            let v = v_amount.clone();
+                                                            move |val, _window, cx| {
+                                                                v.update(cx, |this, cx| {
+                                                                    this.ing_amount = *val;
+                                                                    cx.notify();
+                                                                });
+                                                            }
+                                                        }),
+                                                )
+                                                .child(
+                                                    Select::new("select-ing-unit", unit_options)
+                                                        .label("Unit")
+                                                        .selected_id(Some(format!("{:?}", ing_unit)))
+                                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                                            let unit = match opt.id.as_str() {
+                                                                "Kilogram" => Unit::Kilogram,
+                                                                "Milliliter" => Unit::Milliliter,
+                                                                "Liter" => Unit::Liter,
+                                                                "Cup" => Unit::Cup,
+                                                                "Tablespoon" => Unit::Tablespoon,
+                                                                "Teaspoon" => Unit::Teaspoon,
+                                                                "Ounce" => Unit::Ounce,
+                                                                "Pound" => Unit::Pound,
+                                                                "Each" => Unit::Each,
+                                                                _ => Unit::Gram,
+                                                            };
+                                                            v_unit.update(cx, |this, cx| {
+                                                                this.ing_unit = unit;
+                                                                cx.notify();
+                                                            });
+                                                        }),
+                                                ),
+                                        )
+                                        .child(
+                                            Checkbox::new("cb-ing-required")
+                                                .label("Required Ingredient (unchecked = optional)")
+                                                .checked(ing_required)
+                                                .on_click(move |checked, _window, cx| {
+                                                    v_req.update(cx, |this, cx| {
+                                                        this.ing_required = *checked;
+                                                        cx.notify();
+                                                    });
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("btn-add-ing-edge")
+                                                .secondary()
+                                                .label("+ Add Ingredient Edge")
+                                                .on_click(move |_, _window, cx| {
+                                                    v_add_edge.update(cx, |this, cx| {
+                                                        this.add_ingredient_to_form(cx);
+                                                    });
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(div().text_xs().font_weight(FontWeight::BOLD).child(format!("Configured Ingredients ({})", form_ingredients.len())))
+                                        .children(form_ingredients.into_iter().enumerate().map(|(idx, edge)| {
+                                            let target_str = match edge.target {
+                                                ItemOrRecipeId::Item(iid) => items
+                                                    .iter()
+                                                    .find(|i| i.id == iid)
+                                                    .map(|i| i.name.clone())
+                                                    .unwrap_or_else(|| "Item".to_string()),
+                                                ItemOrRecipeId::Recipe(_) => "Sub-Recipe".to_string(),
+                                            };
+
+                                            let v_rem = v_rem_edge.clone();
+                                            let edge_id = format!("form-edge-{}", idx);
+                                            div()
+                                                .id(ElementId::from(edge_id))
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .p_2()
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .rounded_md()
+                                                .text_xs()
+                                                .child(format!("{} - {} {}", target_str, edge.quantity.amount, edge.quantity.unit))
+                                                .child(
+                                                    Button::new(format!("btn-rem-edge-{}", idx))
+                                                        .ghost()
+                                                        .label("✕")
+                                                        .on_click(move |_, _window, cx| {
+                                                            v_rem.update(cx, |this, cx| {
+                                                                this.remove_ingredient_from_form(idx, cx);
+                                                            });
+                                                        }),
+                                                )
+                                        })),
+                                ),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-recipe-modal")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-save-recipe-modal")
+                                        .primary()
+                                        .label("Save Recipe")
+                                        .on_click(move |_, window, cx| {
+                                            v_save.update(cx, |this, cx| {
+                                                this.save_recipe(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn add_ingredient_to_form(&mut self, cx: &mut Context<Self>) {
@@ -241,12 +516,12 @@ impl RecipesView {
             Ok(saved) => {
                 self.status_msg = format!("Saved recipe: {}", saved.name);
                 self.selected_recipe_id = Some(saved.id);
-                self.show_recipe_modal = false;
             }
             Err(e) => {
                 self.status_msg = format!("Error saving recipe: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
@@ -262,16 +537,101 @@ impl RecipesView {
                 self.status_msg = format!("Error deleting recipe: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
-    pub fn open_make_recipe_modal(&mut self, recipe: &Recipe, cx: &mut Context<Self>) {
+    pub fn open_make_recipe_modal(&mut self, recipe: &Recipe, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_recipe_id = Some(recipe.id);
         self.make_batches = dec!(1.0);
         self.make_selected_yield = recipe.yields.first().map(|y| y.0);
         self.make_status = format!("Ready to batch cook '{}'", recipe.name);
-        self.show_make_modal = true;
-        cx.notify();
+
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let make_batches = view_read.make_batches;
+                    let make_status = view_read.make_status.clone();
+
+                    let v_num = view.clone();
+                    let v_exec = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child("Execute Make Recipe"))
+                                .child(DialogDescription::new().child("Batch cook recipe and update Pantry inventory")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    NumberInput::new("input-make-batches", make_batches)
+                                        .label("Batch Multiplier / Scale")
+                                        .step(dec!(0.5))
+                                        .unit("x")
+                                        .on_increment({
+                                            let v = v_num.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.make_batches = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_num.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.make_batches = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .when(!make_status.is_empty(), |this| {
+                                    this.child(
+                                        div()
+                                            .p_3()
+                                            .bg(cx.theme().accent)
+                                            .rounded_md()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(make_status),
+                                    )
+                                }),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-make-modal")
+                                        .secondary()
+                                        .label("Close")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-confirm-make-cook")
+                                        .primary()
+                                        .label("🍳 Produce Batch & Update Pantry")
+                                        .on_click(move |_, window, cx| {
+                                            v_exec.update(cx, |this, cx| {
+                                                this.execute_make_recipe(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn execute_make_recipe(&mut self, cx: &mut Context<Self>) {
@@ -280,16 +640,16 @@ impl RecipesView {
             None => return,
         };
 
-        let recipes = self.services.recipes.list_recipes().unwrap_or_default();
+        let recipes = self.cached_recipes.clone();
         let recipe = match recipes.into_iter().find(|r| r.id == recipe_id) {
             Some(r) => r,
             None => return,
         };
 
-        let items_list = self.services.items.list_items().unwrap_or_default();
+        let items_list = self.cached_items.clone();
         let items_map: HashMap<ItemId, Item> = items_list.into_iter().map(|i| (i.id, i)).collect();
 
-        let recipes_list = self.services.recipes.list_recipes().unwrap_or_default();
+        let recipes_list = self.cached_recipes.clone();
         let recipes_map: HashMap<RecipeId, Recipe> = recipes_list.into_iter().map(|r| (r.id, r)).collect();
 
         let mut config = MakeRecipeConfig::default();
@@ -313,14 +673,15 @@ impl RecipesView {
                 self.make_status = format!("Execution Error: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 }
 
 impl Render for RecipesView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recipes = self.services.recipes.list_recipes().unwrap_or_default();
-        let items = self.services.items.list_items().unwrap_or_default();
+        let recipes = self.cached_recipes.clone();
+        let items = self.cached_items.clone();
 
         let filtered_recipes: Vec<Recipe> = recipes
             .into_iter()
@@ -338,36 +699,7 @@ impl Render for RecipesView {
             .and_then(|id| filtered_recipes.iter().find(|r| r.id == id).cloned());
         let has_selected_recipe = selected_recipe.is_some();
 
-        let recipe_cost_estimate = if let Some(ref r) = selected_recipe {
-            self.services.recipes.estimate_cost(r.id).ok()
-        } else {
-            None
-        };
-
-        let item_options: Vec<SelectOption> = items
-            .iter()
-            .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
-            .collect();
-
-        let _recipe_options: Vec<SelectOption> = filtered_recipes
-            .iter()
-            .map(|r| SelectOption::new(r.id.0.to_string(), format!("Recipe: {}", r.name)))
-            .collect();
-
-        let unit_options = vec![
-            SelectOption::new("Gram", "Gram (g)"),
-            SelectOption::new("Kilogram", "Kilogram (kg)"),
-            SelectOption::new("Milliliter", "Milliliter (ml)"),
-            SelectOption::new("Liter", "Liter (L)"),
-            SelectOption::new("Cup", "Cup"),
-            SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
-            SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
-            SelectOption::new("Ounce", "Ounce (oz)"),
-            SelectOption::new("Pound", "Pound (lb)"),
-            SelectOption::new("Each", "Each (count)"),
-            SelectOption::new("Batch", "Batch"),
-            SelectOption::new("Serving", "Serving"),
-        ];
+        let recipe_cost_estimate = self.cached_cost.clone();
 
         div()
             .flex()
@@ -411,8 +743,8 @@ impl Render for RecipesView {
                                 Button::new("btn-new-recipe")
                                     .primary()
                                     .label("+ Create Recipe")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.open_create_recipe_modal(cx);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.open_create_recipe_modal(window, cx);
                                     })),
                             ),
                     ),
@@ -478,6 +810,7 @@ impl Render for RecipesView {
                                             .hover(|s| s.bg(cx.theme().muted))
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                                 this.selected_recipe_id = Some(recipe_id);
+                                                this.reload_data();
                                                 cx.notify();
                                             }))
                                             .child(
@@ -516,8 +849,8 @@ impl Render for RecipesView {
                                                         Button::new(format!("btn-make-{}", recipe_id))
                                                             .primary()
                                                             .label("Make Recipe")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.open_make_recipe_modal(&rec, cx);
+                                                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                                                this.open_make_recipe_modal(&rec, window, cx);
                                                             }))
                                                     })
                                                     .child({
@@ -525,8 +858,8 @@ impl Render for RecipesView {
                                                         Button::new(format!("btn-edit-rec-{}", recipe_id))
                                                             .secondary()
                                                             .label("Edit")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.open_edit_recipe_modal(&rec, cx);
+                                                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                                                this.open_edit_recipe_modal(&rec, window, cx);
                                                             }))
                                                     })
                                                     .child(
@@ -583,8 +916,8 @@ impl Render for RecipesView {
                                             Button::new("btn-pane-make-recipe")
                                                 .primary()
                                                 .label("🍳 Cook / Produce Batch")
-                                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                    this.open_make_recipe_modal(&recipe_clone, cx);
+                                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                                    this.open_make_recipe_modal(&recipe_clone, window, cx);
                                                 })),
                                         ),
                                 )
@@ -707,234 +1040,6 @@ impl Render for RecipesView {
                                         .child("Select a recipe from the sidebar to inspect dependencies, evaluation costings, and execute cooking."),
                                 )
                             }),
-                    ),
-            )
-            // Recipe Creation / Edit Modal Dialog
-            .child(
-                Dialog::new(
-                    "recipe-crud-modal",
-                    if self.editing_recipe_id.is_some() {
-                        "Edit Recipe Definition"
-                    } else {
-                        "Create New Recipe"
-                    },
-                )
-                .subtitle("Configure recipe yields, ingredient edges, required/optional flags, and instructions")
-                .is_open(self.show_recipe_modal)
-                .on_close(cx.listener(|this, _event, _window, cx| {
-                    this.show_recipe_modal = false;
-                    cx.notify();
-                }))
-                .child(
-                    FormInput::new("input-recipe-name")
-                        .label("Recipe Name")
-                        .placeholder("e.g. Homemade Bolognese Sauce")
-                        .value(self.recipe_form_name.clone()),
-                )
-                .child(
-                    NumberInput::new("input-recipe-servings", self.recipe_form_servings)
-                        .label("Base Servings Count")
-                        .step(dec!(1))
-                        .on_increment(cx.listener(|this, val, _window, cx| {
-                            this.recipe_form_servings = *val;
-                            cx.notify();
-                        }))
-                        .on_decrement(cx.listener(|this, val, _window, cx| {
-                            this.recipe_form_servings = *val;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    FormInput::new("input-recipe-instructions")
-                        .label("Preparation Instructions")
-                        .placeholder("e.g. Sauté onions, brown meat, simmer for 45 mins")
-                        .value(self.recipe_form_instructions.clone()),
-                )
-                // Sub-form for adding Ingredient Edges
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .p_3()
-                        .bg(cx.theme().muted)
-                        .rounded_md()
-                        .child(div().text_xs().font_weight(FontWeight::BOLD).child("Add Ingredient Edge"))
-                        .child(
-                            Select::new("select-ing-item-target", item_options.clone())
-                                .label("Target Ingredient Item")
-                                .selected_id(self.ing_target_item_id.map(|id| id.0.to_string()))
-                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                    if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                        this.ing_target_item_id = Some(ItemId(uuid));
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap_2()
-                                .child(
-                                    NumberInput::new("input-ing-amount", self.ing_amount)
-                                        .label("Amount")
-                                        .step(dec!(10))
-                                        .on_increment(cx.listener(|this, val, _window, cx| {
-                                            this.ing_amount = *val;
-                                            cx.notify();
-                                        }))
-                                        .on_decrement(cx.listener(|this, val, _window, cx| {
-                                            this.ing_amount = *val;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    Select::new("select-ing-unit", unit_options.clone())
-                                        .label("Unit")
-                                        .selected_id(Some(format!("{:?}", self.ing_unit)))
-                                        .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                            this.ing_unit = match opt.id.as_str() {
-                                                "Kilogram" => Unit::Kilogram,
-                                                "Milliliter" => Unit::Milliliter,
-                                                "Liter" => Unit::Liter,
-                                                "Cup" => Unit::Cup,
-                                                "Tablespoon" => Unit::Tablespoon,
-                                                "Teaspoon" => Unit::Teaspoon,
-                                                "Ounce" => Unit::Ounce,
-                                                "Pound" => Unit::Pound,
-                                                "Each" => Unit::Each,
-                                                _ => Unit::Gram,
-                                            };
-                                            cx.notify();
-                                        })),
-                                ),
-                        )
-                        .child(
-                            Checkbox::new("cb-ing-required")
-                                .label("Required Ingredient (unchecked = optional)")
-                                .checked(self.ing_required)
-                                .on_click(cx.listener(|this, checked, _window, cx| {
-                                    this.ing_required = *checked;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("btn-add-ing-edge")
-                                .secondary()
-                                .label("+ Add Ingredient Edge")
-                                .on_click(cx.listener(|this, _event, _window, cx| {
-                                    this.add_ingredient_to_form(cx);
-                                })),
-                        ),
-                )
-                // List of current configured ingredient edges in form
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(div().text_xs().font_weight(FontWeight::BOLD).child(format!("Configured Ingredients ({})", self.recipe_form_ingredients.len())))
-                        .children(self.recipe_form_ingredients.clone().into_iter().enumerate().map(|(idx, edge)| {
-                            let target_str = match edge.target {
-                                ItemOrRecipeId::Item(iid) => items
-                                    .iter()
-                                    .find(|i| i.id == iid)
-                                    .map(|i| i.name.clone())
-                                    .unwrap_or_else(|| "Item".to_string()),
-                                ItemOrRecipeId::Recipe(_) => "Sub-Recipe".to_string(),
-                            };
-
-                            let edge_id = format!("form-edge-{}", idx);
-                            div()
-                                .id(ElementId::from(edge_id))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .p_2()
-                                .border_1()
-                                .border_color(cx.theme().border)
-                                .rounded_md()
-                                .text_xs()
-                                .child(format!("{} - {} {}", target_str, edge.quantity.amount, edge.quantity.unit))
-                                .child(
-                                    Button::new(format!("btn-rem-edge-{}", idx))
-                                        .ghost()
-                                        .label("✕")
-                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                            this.remove_ingredient_from_form(idx, cx);
-                                        })),
-                                )
-                        })),
-                )
-                .footer_action(
-                    Button::new("btn-cancel-recipe-modal")
-                        .secondary()
-                        .label("Cancel")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.show_recipe_modal = false;
-                            cx.notify();
-                        })),
-                )
-                .footer_action(
-                    Button::new("btn-save-recipe-modal")
-                        .primary()
-                        .label("Save Recipe")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.save_recipe(cx);
-                        })),
-                ),
-            )
-            // Make Recipe Modal Dialog
-            .child(
-                Dialog::new("make-recipe-exec-modal", "Execute Make Recipe")
-                    .subtitle("Batch cook recipe and update Pantry inventory")
-                    .is_open(self.show_make_modal)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.show_make_modal = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        NumberInput::new("input-make-batches", self.make_batches)
-                            .label("Batch Multiplier / Scale")
-                            .step(dec!(0.5))
-                            .unit("x")
-                            .on_increment(cx.listener(|this, val, _window, cx| {
-                                this.make_batches = *val;
-                                cx.notify();
-                            }))
-                            .on_decrement(cx.listener(|this, val, _window, cx| {
-                                this.make_batches = *val;
-                                cx.notify();
-                            })),
-                    )
-                    .when(!self.make_status.is_empty(), |this| {
-                        let status_str = self.make_status.clone();
-                        this.child(
-                            div()
-                                .p_3()
-                                .bg(cx.theme().accent)
-                                .rounded_md()
-                                .text_xs()
-                                .font_weight(FontWeight::BOLD)
-                                .child(status_str),
-                        )
-                    })
-                    .footer_action(
-                        Button::new("btn-cancel-make-modal")
-                            .secondary()
-                            .label("Close")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.show_make_modal = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-confirm-make-cook")
-                            .primary()
-                            .label("🍳 Produce Batch & Update Pantry")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.execute_make_recipe(cx);
-                            })),
                     ),
             )
     }

@@ -29,6 +29,22 @@ impl Storage {
                 item.category
             ],
         )?;
+
+        if let Some(ref bridge) = item.count_bridge {
+            let from_unit_str = serde_json::to_string(&bridge.from_qty.unit).unwrap_or_default();
+            let to_unit_str = serde_json::to_string(&bridge.to_qty.unit).unwrap_or_default();
+            conn.execute(
+                "INSERT OR REPLACE INTO unit_bridges (item_id, from_amount, from_unit, to_amount, to_unit)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    item.id.0.to_string(),
+                    bridge.from_qty.amount.to_string(),
+                    from_unit_str,
+                    bridge.to_qty.amount.to_string(),
+                    to_unit_str,
+                ],
+            )?;
+        }
         Ok(())
     }
 
@@ -57,6 +73,27 @@ impl Storage {
             item.id = ItemId(parse_uuid(&id_str)?);
             item.density = density;
             item.category = category;
+
+            // Re-hydrate count_bridge if present
+            let mut bridge_stmt = conn.prepare(
+                "SELECT from_amount, from_unit, to_amount, to_unit FROM unit_bridges WHERE item_id = ?1",
+            )?;
+            let mut bridge_rows = bridge_stmt.query(params![item.id.0.to_string()])?;
+            if let Some(brow) = bridge_rows.next()? {
+                let from_amt_str: String = brow.get(0)?;
+                let from_unit_str: String = brow.get(1)?;
+                let to_amt_str: String = brow.get(2)?;
+                let to_unit_str: String = brow.get(3)?;
+
+                let from_amount = Decimal::from_str(&from_amt_str).unwrap_or(Decimal::ONE);
+                let from_unit: Unit = serde_json::from_str(&from_unit_str).unwrap_or(Unit::Each);
+                let to_amount = Decimal::from_str(&to_amt_str).unwrap_or(Decimal::ONE);
+                let to_unit: Unit = serde_json::from_str(&to_unit_str).unwrap_or(Unit::Gram);
+
+                if let Ok(bridge) = UnitBridge::new(item.id, Quantity { amount: from_amount, unit: from_unit }, Quantity { amount: to_amount, unit: to_unit }) {
+                    item.count_bridge = Some(bridge);
+                }
+            }
 
             Ok(Some(item))
         } else {
@@ -93,7 +130,28 @@ impl Storage {
 
         let mut items = Vec::new();
         for r in rows {
-            items.push(r?);
+            let mut item = r?;
+            // Re-hydrate count_bridge
+            let mut bridge_stmt = conn.prepare(
+                "SELECT from_amount, from_unit, to_amount, to_unit FROM unit_bridges WHERE item_id = ?1",
+            )?;
+            let mut bridge_rows = bridge_stmt.query(params![item.id.0.to_string()])?;
+            if let Some(brow) = bridge_rows.next()? {
+                let from_amt_str: String = brow.get(0)?;
+                let from_unit_str: String = brow.get(1)?;
+                let to_amt_str: String = brow.get(2)?;
+                let to_unit_str: String = brow.get(3)?;
+
+                let from_amount = Decimal::from_str(&from_amt_str).unwrap_or(Decimal::ONE);
+                let from_unit: Unit = serde_json::from_str(&from_unit_str).unwrap_or(Unit::Each);
+                let to_amount = Decimal::from_str(&to_amt_str).unwrap_or(Decimal::ONE);
+                let to_unit: Unit = serde_json::from_str(&to_unit_str).unwrap_or(Unit::Gram);
+
+                if let Ok(bridge) = UnitBridge::new(item.id, Quantity { amount: from_amount, unit: from_unit }, Quantity { amount: to_amount, unit: to_unit }) {
+                    item.count_bridge = Some(bridge);
+                }
+            }
+            items.push(item);
         }
         Ok(items)
     }

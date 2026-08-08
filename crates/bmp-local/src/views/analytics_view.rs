@@ -8,38 +8,52 @@ use gpui_component::tag::Tag;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 
+use bmp_services::AnalyticsSummary;
+
 pub struct AnalyticsView {
     pub services: AppServices,
     pub date_filter: String, // "all", "7d", "30d"
+
+    pub cached_summary: Option<AnalyticsSummary>,
+    pub cached_receipts: Vec<(String, Option<bmp_domain::StoreId>, Decimal, chrono::DateTime<chrono::Utc>)>,
+    pub cached_stores: Vec<bmp_domain::Store>,
 }
 
 impl AnalyticsView {
     pub fn new(services: AppServices) -> Self {
-        Self {
+        let mut view = Self {
             services,
             date_filter: "all".to_string(),
-        }
+            cached_summary: None,
+            cached_receipts: Vec::new(),
+            cached_stores: Vec::new(),
+        };
+        view.reload_data();
+        view
+    }
+
+    pub fn reload_data(&mut self) {
+        self.cached_summary = self.services.analytics.get_overall_summary().ok();
+        self.cached_receipts = self.services.storage.get_all_receipts().unwrap_or_default();
+        self.cached_stores = self.services.items.list_stores().unwrap_or_default();
     }
 }
 
 impl Render for AnalyticsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let summary = self.services.analytics.get_overall_summary().ok();
-        let receipts = self.services.storage.get_all_receipts().unwrap_or_default();
-        let stores = self.services.items.list_stores().unwrap_or_default();
+        let summary = self.cached_summary.as_ref();
+        let receipts = self.cached_receipts.clone();
+        let stores = self.cached_stores.clone();
 
         let projected_str = summary
-            .as_ref()
             .map(|s| format!("${}", s.projected_cost.normalize()))
             .unwrap_or_else(|| "$0.00".to_string());
 
         let actual_str = summary
-            .as_ref()
             .map(|s| format!("${}", s.actual_expenditure.normalize()))
             .unwrap_or_else(|| "$0.00".to_string());
 
         let variance_str = summary
-            .as_ref()
             .map(|s| {
                 let v = s.variance;
                 if v > Decimal::ZERO {
@@ -98,6 +112,7 @@ impl Render for AnalyticsView {
                                     .selected_id(Some(self.date_filter.clone()))
                                     .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
                                         this.date_filter = opt.id.clone();
+                                        this.reload_data();
                                         cx.notify();
                                     })),
                             ),

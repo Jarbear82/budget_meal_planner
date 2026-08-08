@@ -6,8 +6,10 @@ use gpui::*;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::tag::Tag;
+use gpui_component::WindowExt;
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -18,14 +20,12 @@ pub struct ItemsView {
     pub search_query: String,
     pub status_msg: String,
 
+    pub cached_items: Vec<Item>,
+    pub cached_stores: Vec<Store>,
+    pub cached_packages: Vec<Package>,
+
     // Selected Item for detail view / editing
     pub selected_item_id: Option<ItemId>,
-
-    // Modals visibility state
-    pub show_item_modal: bool,
-    pub show_package_modal: bool,
-    pub show_store_modal: bool,
-    pub show_bridge_modal: bool,
 
     // Item modal form state
     pub editing_item_id: Option<ItemId>,
@@ -55,16 +55,14 @@ pub struct ItemsView {
 
 impl ItemsView {
     pub fn new(services: AppServices) -> Self {
-        Self {
+        let mut view = Self {
             services,
             search_query: String::new(),
             status_msg: "Items matrix ready".to_string(),
+            cached_items: Vec::new(),
+            cached_stores: Vec::new(),
+            cached_packages: Vec::new(),
             selected_item_id: None,
-
-            show_item_modal: false,
-            show_package_modal: false,
-            show_store_modal: false,
-            show_bridge_modal: false,
 
             editing_item_id: None,
             item_form_name: String::new(),
@@ -86,27 +84,154 @@ impl ItemsView {
             bridge_from_unit: Unit::Each,
             bridge_to_amount: dec!(150),
             bridge_to_unit: Unit::Gram,
+        };
+        view.reload_data();
+        view
+    }
+
+    pub fn reload_data(&mut self) {
+        self.cached_items = self.services.items.list_items().unwrap_or_default();
+        self.cached_stores = self.services.items.list_stores().unwrap_or_default();
+        if let Some(id) = self.selected_item_id {
+            self.cached_packages = self.services.items.get_packages_for_item(id).unwrap_or_default();
+        } else {
+            self.cached_packages.clear();
         }
     }
 
-    pub fn open_create_item_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_create_item_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editing_item_id = None;
         self.item_form_name = String::new();
         self.item_form_density = dec!(1.0);
         self.item_form_category = "General".to_string();
         self.item_form_mode = PurchaseMode::BuyFinished;
-        self.show_item_modal = true;
-        cx.notify();
+        self.show_item_dialog(window, cx);
     }
 
-    pub fn open_edit_item_modal(&mut self, item: &Item, cx: &mut Context<Self>) {
+    pub fn open_edit_item_modal(&mut self, item: &Item, window: &mut Window, cx: &mut Context<Self>) {
         self.editing_item_id = Some(item.id);
         self.item_form_name = item.name.clone();
         self.item_form_density = item.density.map(|d| d.g_per_ml).unwrap_or(dec!(1.0));
         self.item_form_category = item.category.clone().unwrap_or_else(|| "General".to_string());
         self.item_form_mode = item.preferred_purchase_mode;
-        self.show_item_modal = true;
-        cx.notify();
+        self.show_item_dialog(window, cx);
+    }
+
+    fn show_item_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let is_edit = view_read.editing_item_id.is_some();
+                    let title = if is_edit { "Edit Domain Item" } else { "Add Domain Item" };
+
+                    let mode_options = vec![
+                        SelectOption::new("BuyFinished", "Buy Finished Package"),
+                        SelectOption::new("PreferMake", "Prefer Make / Expand"),
+                        SelectOption::new("AskEveryTime", "Ask Every Time"),
+                    ];
+
+                    let form_name = view_read.item_form_name.clone();
+                    let form_category = view_read.item_form_category.clone();
+                    let form_density = view_read.item_form_density;
+                    let form_mode = view_read.item_form_mode;
+
+                    let v_num = view.clone();
+                    let v_mode = view.clone();
+                    let v_save = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child(title))
+                                .child(DialogDescription::new().child("Configure density (g/ml), category, and default purchase mode")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    FormInput::new("input-item-name")
+                                        .label("Item Name")
+                                        .placeholder("e.g. Extra Virgin Olive Oil")
+                                        .value(form_name),
+                                )
+                                .child(
+                                    FormInput::new("input-item-category")
+                                        .label("Category")
+                                        .placeholder("e.g. Oils & Fats, Pantry, Dairy")
+                                        .value(form_category),
+                                )
+                                .child(
+                                    NumberInput::new("input-item-density", form_density)
+                                        .label("Density (g/ml)")
+                                        .step(dec!(0.05))
+                                        .unit("g/ml")
+                                        .on_increment({
+                                            let v = v_num.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.item_form_density = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_num.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.item_form_density = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Select::new("select-item-purchase-mode", mode_options)
+                                        .label("Preferred Purchase Mode")
+                                        .selected_id(Some(format!("{:?}", form_mode)))
+                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                            let mode = match opt.id.as_str() {
+                                                "PreferMake" => PurchaseMode::PreferMake,
+                                                "AskEveryTime" => PurchaseMode::AskEveryTime,
+                                                _ => PurchaseMode::BuyFinished,
+                                            };
+                                            v_mode.update(cx, |this, cx| {
+                                                this.item_form_mode = mode;
+                                                cx.notify();
+                                            });
+                                        }),
+                                ),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-item-modal")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-save-item-modal")
+                                        .primary()
+                                        .label("Save Item")
+                                        .on_click(move |_, window, cx| {
+                                            v_save.update(cx, |this, cx| {
+                                                this.save_item(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn save_item(&mut self, cx: &mut Context<Self>) {
@@ -139,7 +264,6 @@ impl ItemsView {
                     match self.services.items.update_item(item) {
                         Ok(_) => {
                             self.status_msg = format!("Updated item: {}", item.name);
-                            self.show_item_modal = false;
                         }
                         Err(e) => {
                             self.status_msg = format!("Error updating item: {}", e);
@@ -155,13 +279,13 @@ impl ItemsView {
             ) {
                 Ok(item) => {
                     self.status_msg = format!("Created item: {}", item.name);
-                    self.show_item_modal = false;
                 }
                 Err(e) => {
                     self.status_msg = format!("Error creating item: {}", e);
                 }
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
@@ -177,19 +301,189 @@ impl ItemsView {
                 self.status_msg = format!("Error deleting item: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
-    pub fn open_add_package_modal(&mut self, item_id: ItemId, cx: &mut Context<Self>) {
+    pub fn open_add_package_modal(&mut self, item_id: ItemId, window: &mut Window, cx: &mut Context<Self>) {
         self.pkg_form_item_id = Some(item_id);
-        let stores = self.services.items.list_stores().unwrap_or_default();
+        let stores = &self.cached_stores;
         self.pkg_form_store_id = stores.first().map(|s| s.id);
         self.pkg_form_amount = dec!(500);
         self.pkg_form_unit = Unit::Gram;
         self.pkg_form_price = dec!(4.99);
         self.pkg_form_preferred = true;
-        self.show_package_modal = true;
-        cx.notify();
+
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let stores = &view_read.cached_stores;
+                    let store_options: Vec<SelectOption> = stores
+                        .iter()
+                        .map(|s| SelectOption::new(s.id.0.to_string(), s.name.clone()))
+                        .collect();
+
+                    let unit_options = vec![
+                        SelectOption::new("Gram", "Gram (g)"),
+                        SelectOption::new("Kilogram", "Kilogram (kg)"),
+                        SelectOption::new("Milliliter", "Milliliter (ml)"),
+                        SelectOption::new("Liter", "Liter (L)"),
+                        SelectOption::new("Cup", "Cup"),
+                        SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
+                        SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
+                        SelectOption::new("Ounce", "Ounce (oz)"),
+                        SelectOption::new("Pound", "Pound (lb)"),
+                        SelectOption::new("Each", "Each (count)"),
+                    ];
+
+                    let pkg_store_id = view_read.pkg_form_store_id;
+                    let pkg_amount = view_read.pkg_form_amount;
+                    let pkg_unit = view_read.pkg_form_unit.clone();
+                    let pkg_price = view_read.pkg_form_price;
+                    let pkg_preferred = view_read.pkg_form_preferred;
+
+                    let v_store = view.clone();
+                    let v_amt = view.clone();
+                    let v_unit = view.clone();
+                    let v_price = view.clone();
+                    let v_pref = view.clone();
+                    let v_save = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child("Add Store Package"))
+                                .child(DialogDescription::new().child("Register a store price and quantity package for this item")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    Select::new("select-pkg-store", store_options)
+                                        .label("Store")
+                                        .selected_id(pkg_store_id.map(|id| id.0.to_string()))
+                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                            if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
+                                                v_store.update(cx, |this, cx| {
+                                                    this.pkg_form_store_id = Some(StoreId(uuid));
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    NumberInput::new("input-pkg-amount", pkg_amount)
+                                        .label("Package Size / Amount")
+                                        .step(dec!(50))
+                                        .on_increment({
+                                            let v = v_amt.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.pkg_form_amount = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_amt.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.pkg_form_amount = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Select::new("select-pkg-unit", unit_options)
+                                        .label("Package Unit")
+                                        .selected_id(Some(format!("{:?}", pkg_unit)))
+                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                            let unit = match opt.id.as_str() {
+                                                "Kilogram" => Unit::Kilogram,
+                                                "Milliliter" => Unit::Milliliter,
+                                                "Liter" => Unit::Liter,
+                                                "Cup" => Unit::Cup,
+                                                "Tablespoon" => Unit::Tablespoon,
+                                                "Teaspoon" => Unit::Teaspoon,
+                                                "Ounce" => Unit::Ounce,
+                                                "Pound" => Unit::Pound,
+                                                "Each" => Unit::Each,
+                                                _ => Unit::Gram,
+                                            };
+                                            v_unit.update(cx, |this, cx| {
+                                                this.pkg_form_unit = unit;
+                                                cx.notify();
+                                            });
+                                        }),
+                                )
+                                .child(
+                                    NumberInput::new("input-pkg-price", pkg_price)
+                                        .label("Package Price ($)")
+                                        .step(dec!(0.50))
+                                        .unit("$")
+                                        .on_increment({
+                                            let v = v_price.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.pkg_form_price = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_price.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.pkg_form_price = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Checkbox::new("cb-pkg-preferred")
+                                        .label("Preferred store package for shopping calculations")
+                                        .checked(pkg_preferred)
+                                        .on_click(move |checked, _window, cx| {
+                                            v_pref.update(cx, |this, cx| {
+                                                this.pkg_form_preferred = *checked;
+                                                cx.notify();
+                                            });
+                                        }),
+                                ),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-pkg")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-save-pkg")
+                                        .primary()
+                                        .label("Add Package")
+                                        .on_click(move |_, window, cx| {
+                                            v_save.update(cx, |this, cx| {
+                                                this.save_package(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn save_package(&mut self, cx: &mut Context<Self>) {
@@ -220,12 +514,12 @@ impl ItemsView {
                 pkg.is_preferred = self.pkg_form_preferred;
                 let _ = self.services.items.update_package(&pkg);
                 self.status_msg = "Added package successfully".to_string();
-                self.show_package_modal = false;
             }
             Err(e) => {
                 self.status_msg = format!("Error adding package: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
@@ -238,6 +532,7 @@ impl ItemsView {
                 self.status_msg = format!("Error deleting package: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
@@ -251,13 +546,64 @@ impl ItemsView {
                 }
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
-    pub fn open_add_store_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_add_store_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.store_form_name = String::new();
-        self.show_store_modal = true;
-        cx.notify();
+
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let store_name = view_read.store_form_name.clone();
+
+                    let v_save = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child("Register New Store"))
+                                .child(DialogDescription::new().child("Add a supermarket, grocery store, or supplier")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .child(
+                                    FormInput::new("input-store-name")
+                                        .label("Store Name")
+                                        .placeholder("e.g. Costco, Trader Joe's, Safeway")
+                                        .value(store_name),
+                                ),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-store")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-save-store")
+                                        .primary()
+                                        .label("Register Store")
+                                        .on_click(move |_, window, cx| {
+                                            v_save.update(cx, |this, cx| {
+                                                this.save_store(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn save_store(&mut self, cx: &mut Context<Self>) {
@@ -269,23 +615,170 @@ impl ItemsView {
         match self.services.items.add_store(self.store_form_name.trim()) {
             Ok(store) => {
                 self.status_msg = format!("Registered store: {}", store.name);
-                self.show_store_modal = false;
             }
             Err(e) => {
                 self.status_msg = format!("Error adding store: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 
-    pub fn open_add_bridge_modal(&mut self, item_id: ItemId, cx: &mut Context<Self>) {
+    pub fn open_add_bridge_modal(&mut self, item_id: ItemId, window: &mut Window, cx: &mut Context<Self>) {
         self.bridge_form_item_id = Some(item_id);
         self.bridge_from_amount = dec!(1);
         self.bridge_from_unit = Unit::Each;
         self.bridge_to_amount = dec!(150);
         self.bridge_to_unit = Unit::Gram;
-        self.show_bridge_modal = true;
-        cx.notify();
+
+        let view = cx.entity().clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let view = view.clone();
+            dialog
+                .w(px(500.))
+                .content(move |content, _, cx| {
+                    let view_read = view.read(cx);
+                    let unit_options = vec![
+                        SelectOption::new("Gram", "Gram (g)"),
+                        SelectOption::new("Kilogram", "Kilogram (kg)"),
+                        SelectOption::new("Milliliter", "Milliliter (ml)"),
+                        SelectOption::new("Liter", "Liter (L)"),
+                        SelectOption::new("Cup", "Cup"),
+                        SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
+                        SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
+                        SelectOption::new("Ounce", "Ounce (oz)"),
+                        SelectOption::new("Pound", "Pound (lb)"),
+                        SelectOption::new("Each", "Each (count)"),
+                    ];
+
+                    let from_amt = view_read.bridge_from_amount;
+                    let from_unit = view_read.bridge_from_unit.clone();
+                    let to_amt = view_read.bridge_to_amount;
+                    let to_unit = view_read.bridge_to_unit.clone();
+
+                    let v_from_amt = view.clone();
+                    let v_from_unit = view.clone();
+                    let v_to_amt = view.clone();
+                    let v_to_unit = view.clone();
+                    let v_save = view.clone();
+
+                    content
+                        .child(
+                            DialogHeader::new()
+                                .child(DialogTitle::new().child("Configure Unit Bridge"))
+                                .child(DialogDescription::new().child("Define custom count-to-mass or custom unit conversion for this item")),
+                        )
+                        .child(
+                            div()
+                                .py_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    NumberInput::new("input-bridge-from-qty", from_amt)
+                                        .label("From Quantity")
+                                        .step(dec!(1))
+                                        .on_increment({
+                                            let v = v_from_amt.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.bridge_from_amount = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_from_amt.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.bridge_from_amount = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Select::new("select-bridge-from-unit", unit_options.clone())
+                                        .label("From Unit")
+                                        .selected_id(Some(format!("{:?}", from_unit)))
+                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                            let unit = match opt.id.as_str() {
+                                                "Gram" => Unit::Gram,
+                                                "Each" => Unit::Each,
+                                                "Cup" => Unit::Cup,
+                                                _ => Unit::Each,
+                                            };
+                                            v_from_unit.update(cx, |this, cx| {
+                                                this.bridge_from_unit = unit;
+                                                cx.notify();
+                                            });
+                                        }),
+                                )
+                                .child(
+                                    NumberInput::new("input-bridge-to-qty", to_amt)
+                                        .label("Equals To Quantity")
+                                        .step(dec!(10))
+                                        .on_increment({
+                                            let v = v_to_amt.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.bridge_to_amount = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .on_decrement({
+                                            let v = v_to_amt.clone();
+                                            move |val, _window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.bridge_to_amount = *val;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Select::new("select-bridge-to-unit", unit_options)
+                                        .label("To Unit")
+                                        .selected_id(Some(format!("{:?}", to_unit)))
+                                        .on_select(move |opt: &SelectOption, _window, cx| {
+                                            let unit = match opt.id.as_str() {
+                                                "Gram" => Unit::Gram,
+                                                "Milliliter" => Unit::Milliliter,
+                                                "Ounce" => Unit::Ounce,
+                                                _ => Unit::Gram,
+                                            };
+                                            v_to_unit.update(cx, |this, cx| {
+                                                this.bridge_to_unit = unit;
+                                                cx.notify();
+                                            });
+                                        }),
+                                ),
+                        )
+                        .child(
+                            DialogFooter::new()
+                                .child(
+                                    Button::new("btn-cancel-bridge")
+                                        .secondary()
+                                        .label("Cancel")
+                                        .on_click(|_, window, cx| {
+                                            window.close_dialog(cx);
+                                        }),
+                                )
+                                .child(
+                                    Button::new("btn-save-bridge")
+                                        .primary()
+                                        .label("Save Unit Bridge")
+                                        .on_click(move |_, window, cx| {
+                                            v_save.update(cx, |this, cx| {
+                                                this.save_bridge(cx);
+                                            });
+                                            window.close_dialog(cx);
+                                        }),
+                                ),
+                        )
+                })
+        });
     }
 
     pub fn save_bridge(&mut self, cx: &mut Context<Self>) {
@@ -317,7 +810,6 @@ impl ItemsView {
                         item.count_bridge = Some(bridge);
                         let _ = self.services.items.update_item(item);
                         self.status_msg = format!("Configured unit bridge for {}", item.name);
-                        self.show_bridge_modal = false;
                     }
                 }
             }
@@ -325,14 +817,15 @@ impl ItemsView {
                 self.status_msg = format!("Error creating bridge: {}", e);
             }
         }
+        self.reload_data();
         cx.notify();
     }
 }
 
 impl Render for ItemsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = self.services.items.list_items().unwrap_or_default();
-        let stores = self.services.items.list_stores().unwrap_or_default();
+        let items = self.cached_items.clone();
+        let stores = self.cached_stores.clone();
 
         let filtered_items: Vec<Item> = items
             .into_iter()
@@ -350,43 +843,12 @@ impl Render for ItemsView {
             })
             .collect();
 
-        let store_options: Vec<SelectOption> = stores
-            .iter()
-            .map(|s| SelectOption::new(s.id.0.to_string(), s.name.clone()))
-            .collect();
-
-        let unit_options = vec![
-            SelectOption::new("Gram", "Gram (g)"),
-            SelectOption::new("Kilogram", "Kilogram (kg)"),
-            SelectOption::new("Milliliter", "Milliliter (ml)"),
-            SelectOption::new("Liter", "Liter (L)"),
-            SelectOption::new("Cup", "Cup"),
-            SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
-            SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
-            SelectOption::new("Ounce", "Ounce (oz)"),
-            SelectOption::new("Pound", "Pound (lb)"),
-            SelectOption::new("Each", "Each (count)"),
-        ];
-
-        let mode_options = vec![
-            SelectOption::new("BuyFinished", "Buy Finished Package"),
-            SelectOption::new("PreferMake", "Prefer Make / Expand"),
-            SelectOption::new("AskEveryTime", "Ask Every Time"),
-        ];
-
         let selected_item = self
             .selected_item_id
             .and_then(|id| filtered_items.iter().find(|i| i.id == id).cloned());
         let has_selected_item = selected_item.is_some();
 
-        let selected_item_packages = if let Some(ref item) = selected_item {
-            self.services
-                .items
-                .get_packages_for_item(item.id)
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let selected_item_packages = self.cached_packages.clone();
 
         div()
             .flex()
@@ -431,16 +893,16 @@ impl Render for ItemsView {
                                 Button::new("btn-register-store")
                                     .secondary()
                                     .label("+ Store")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.open_add_store_modal(cx);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.open_add_store_modal(window, cx);
                                     })),
                             )
                             .child(
                                 Button::new("btn-create-item")
                                     .primary()
                                     .label("+ New Item")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.open_create_item_modal(cx);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.open_create_item_modal(window, cx);
                                     })),
                             ),
                     ),
@@ -521,6 +983,7 @@ impl Render for ItemsView {
                                             .hover(|s| s.bg(cx.theme().muted))
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                                 this.selected_item_id = Some(item_id);
+                                                this.reload_data();
                                                 cx.notify();
                                             }))
                                             // Name & Category
@@ -564,8 +1027,8 @@ impl Render for ItemsView {
                                                         Button::new(format!("btn-edit-{}", item_id))
                                                             .secondary()
                                                             .label("Edit")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.open_edit_item_modal(&item_clone, cx);
+                                                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                                                this.open_edit_item_modal(&item_clone, window, cx);
                                                             })),
                                                     )
                                                     .child(
@@ -615,8 +1078,8 @@ impl Render for ItemsView {
                                             Button::new("btn-add-pkg-item")
                                                 .primary()
                                                 .label("+ Package")
-                                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                    this.open_add_package_modal(item_id, cx);
+                                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                                    this.open_add_package_modal(item_id, window, cx);
                                                 })),
                                         ),
                                 )
@@ -639,8 +1102,8 @@ impl Render for ItemsView {
                                                     Button::new("btn-set-bridge")
                                                         .secondary()
                                                         .label("Configure")
-                                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                            this.open_add_bridge_modal(item_id, cx);
+                                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                                            this.open_add_bridge_modal(item_id, window, cx);
                                                         })),
                                                 ),
                                         )
@@ -729,287 +1192,6 @@ impl Render for ItemsView {
                                         .child("Select an item row from the matrix to view store packages and unit bridge details."),
                                 )
                             }),
-                    ),
-            )
-            // Item Creation / Edit Modal Dialog
-            .child(
-                Dialog::new(
-                    "item-crud-modal",
-                    if self.editing_item_id.is_some() {
-                        "Edit Domain Item"
-                    } else {
-                        "Add Domain Item"
-                    },
-                )
-                .subtitle("Configure density (g/ml), category, and default purchase mode")
-                .is_open(self.show_item_modal)
-                .on_close(cx.listener(|this, _event, _window, cx| {
-                    this.show_item_modal = false;
-                    cx.notify();
-                }))
-                .child(
-                    FormInput::new("input-item-name")
-                        .label("Item Name")
-                        .placeholder("e.g. Extra Virgin Olive Oil")
-                        .value(self.item_form_name.clone()),
-                )
-                .child(
-                    FormInput::new("input-item-category")
-                        .label("Category")
-                        .placeholder("e.g. Oils & Fats, Pantry, Dairy")
-                        .value(self.item_form_category.clone()),
-                )
-                .child(
-                    NumberInput::new("input-item-density", self.item_form_density)
-                        .label("Density (g/ml)")
-                        .step(dec!(0.05))
-                        .unit("g/ml")
-                        .on_increment(cx.listener(|this, val, _window, cx| {
-                            this.item_form_density = *val;
-                            cx.notify();
-                        }))
-                        .on_decrement(cx.listener(|this, val, _window, cx| {
-                            this.item_form_density = *val;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Select::new("select-item-purchase-mode", mode_options)
-                        .label("Preferred Purchase Mode")
-                        .selected_id(Some(format!("{:?}", self.item_form_mode)))
-                        .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                            this.item_form_mode = match opt.id.as_str() {
-                                "PreferMake" => PurchaseMode::PreferMake,
-                                "AskEveryTime" => PurchaseMode::AskEveryTime,
-                                _ => PurchaseMode::BuyFinished,
-                            };
-                            cx.notify();
-                        })),
-                )
-                .footer_action(
-                    Button::new("btn-cancel-item-modal")
-                        .secondary()
-                        .label("Cancel")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.show_item_modal = false;
-                            cx.notify();
-                        })),
-                )
-                .footer_action(
-                    Button::new("btn-save-item-modal")
-                        .primary()
-                        .label("Save Item")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.save_item(cx);
-                        })),
-                ),
-            )
-            // Package Creation Modal Dialog
-            .child(
-                Dialog::new("package-crud-modal", "Add Store Package")
-                    .subtitle("Register a store price and quantity package for this item")
-                    .is_open(self.show_package_modal)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.show_package_modal = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        Select::new("select-pkg-store", store_options)
-                            .label("Store")
-                            .selected_id(self.pkg_form_store_id.map(|id| id.0.to_string()))
-                            .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                    this.pkg_form_store_id = Some(StoreId(uuid));
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        NumberInput::new("input-pkg-amount", self.pkg_form_amount)
-                            .label("Package Size / Amount")
-                            .step(dec!(50))
-                            .on_increment(cx.listener(|this, val, _window, cx| {
-                                this.pkg_form_amount = *val;
-                                cx.notify();
-                            }))
-                            .on_decrement(cx.listener(|this, val, _window, cx| {
-                                this.pkg_form_amount = *val;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Select::new("select-pkg-unit", unit_options.clone())
-                            .label("Package Unit")
-                            .selected_id(Some(format!("{:?}", self.pkg_form_unit)))
-                            .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                this.pkg_form_unit = match opt.id.as_str() {
-                                    "Kilogram" => Unit::Kilogram,
-                                    "Milliliter" => Unit::Milliliter,
-                                    "Liter" => Unit::Liter,
-                                    "Cup" => Unit::Cup,
-                                    "Tablespoon" => Unit::Tablespoon,
-                                    "Teaspoon" => Unit::Teaspoon,
-                                    "Ounce" => Unit::Ounce,
-                                    "Pound" => Unit::Pound,
-                                    "Each" => Unit::Each,
-                                    _ => Unit::Gram,
-                                };
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        NumberInput::new("input-pkg-price", self.pkg_form_price)
-                            .label("Package Price ($)")
-                            .step(dec!(0.50))
-                            .unit("$")
-                            .on_increment(cx.listener(|this, val, _window, cx| {
-                                this.pkg_form_price = *val;
-                                cx.notify();
-                            }))
-                            .on_decrement(cx.listener(|this, val, _window, cx| {
-                                this.pkg_form_price = *val;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Checkbox::new("cb-pkg-preferred")
-                            .label("Preferred store package for shopping calculations")
-                            .checked(self.pkg_form_preferred)
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.pkg_form_preferred = *checked;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-cancel-pkg")
-                            .secondary()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.show_package_modal = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-save-pkg")
-                            .primary()
-                            .label("Add Package")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.save_package(cx);
-                            })),
-                    ),
-            )
-            // Store Creation Modal Dialog
-            .child(
-                Dialog::new("store-crud-modal", "Register New Store")
-                    .subtitle("Add a supermarket, grocery store, or supplier")
-                    .is_open(self.show_store_modal)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.show_store_modal = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        FormInput::new("input-store-name")
-                            .label("Store Name")
-                            .placeholder("e.g. Costco, Trader Joe's, Safeway")
-                            .value(self.store_form_name.clone()),
-                    )
-                    .footer_action(
-                        Button::new("btn-cancel-store")
-                            .secondary()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.show_store_modal = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-save-store")
-                            .primary()
-                            .label("Register Store")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.save_store(cx);
-                            })),
-                    ),
-            )
-            // Unit Bridge Modal Dialog
-            .child(
-                Dialog::new("bridge-crud-modal", "Configure Unit Bridge")
-                    .subtitle("Define custom count-to-mass or custom unit conversion for this item")
-                    .is_open(self.show_bridge_modal)
-                    .on_close(cx.listener(|this, _event, _window, cx| {
-                        this.show_bridge_modal = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        NumberInput::new("input-bridge-from-qty", self.bridge_from_amount)
-                            .label("From Quantity")
-                            .step(dec!(1))
-                            .on_increment(cx.listener(|this, val, _window, cx| {
-                                this.bridge_from_amount = *val;
-                                cx.notify();
-                            }))
-                            .on_decrement(cx.listener(|this, val, _window, cx| {
-                                this.bridge_from_amount = *val;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Select::new("select-bridge-from-unit", unit_options.clone())
-                            .label("From Unit")
-                            .selected_id(Some(format!("{:?}", self.bridge_from_unit)))
-                            .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                this.bridge_from_unit = match opt.id.as_str() {
-                                    "Gram" => Unit::Gram,
-                                    "Each" => Unit::Each,
-                                    "Cup" => Unit::Cup,
-                                    _ => Unit::Each,
-                                };
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        NumberInput::new("input-bridge-to-qty", self.bridge_to_amount)
-                            .label("Equals To Quantity")
-                            .step(dec!(10))
-                            .on_increment(cx.listener(|this, val, _window, cx| {
-                                this.bridge_to_amount = *val;
-                                cx.notify();
-                            }))
-                            .on_decrement(cx.listener(|this, val, _window, cx| {
-                                this.bridge_to_amount = *val;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Select::new("select-bridge-to-unit", unit_options.clone())
-                            .label("To Unit")
-                            .selected_id(Some(format!("{:?}", self.bridge_to_unit)))
-                            .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                this.bridge_to_unit = match opt.id.as_str() {
-                                    "Gram" => Unit::Gram,
-                                    "Milliliter" => Unit::Milliliter,
-                                    "Ounce" => Unit::Ounce,
-                                    _ => Unit::Gram,
-                                };
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-cancel-bridge")
-                            .secondary()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.show_bridge_modal = false;
-                                cx.notify();
-                            })),
-                    )
-                    .footer_action(
-                        Button::new("btn-save-bridge")
-                            .primary()
-                            .label("Save Unit Bridge")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.save_bridge(cx);
-                            })),
                     ),
             )
     }

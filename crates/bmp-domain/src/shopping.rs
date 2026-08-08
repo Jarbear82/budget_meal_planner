@@ -113,7 +113,25 @@ pub fn generate_shopping_list(
             continue;
         }
 
-        // Pick preferred package or best price per unit
+        // Helper for normalized price-per-base-unit calculation (g/ml comparison)
+        let get_normalized_unit_cost = |pkg: &Package| -> Decimal {
+            let base_unit = match pkg.quantity.unit {
+                crate::units::Unit::Kilogram | crate::units::Unit::Gram | crate::units::Unit::Ounce | crate::units::Unit::Pound => crate::units::Unit::Gram,
+                crate::units::Unit::Liter | crate::units::Unit::Milliliter | crate::units::Unit::Cup | crate::units::Unit::Tablespoon | crate::units::Unit::Teaspoon => crate::units::Unit::Milliliter,
+                _ => pkg.quantity.unit.clone(),
+            };
+            if let Ok(base_qty) = item.convert_quantity(&pkg.quantity, &base_unit) {
+                if base_qty.amount > Decimal::ZERO {
+                    pkg.price / base_qty.amount
+                } else {
+                    pkg.price / pkg.quantity.amount
+                }
+            } else {
+                pkg.price / pkg.quantity.amount
+            }
+        };
+
+        // Pick preferred package or lowest density-normalized unit cost
         let chosen_pkg = store_pkgs
             .iter()
             .find(|p| p.is_preferred)
@@ -122,9 +140,9 @@ pub fn generate_shopping_list(
                 store_pkgs
                     .iter()
                     .min_by(|a, b| {
-                        let unit_cost_a = a.price / a.quantity.amount;
-                        let unit_cost_b = b.price / b.quantity.amount;
-                        unit_cost_a.cmp(&unit_cost_b)
+                        let cost_a = get_normalized_unit_cost(a);
+                        let cost_b = get_normalized_unit_cost(b);
+                        cost_a.cmp(&cost_b)
                     })
                     .copied()
                     .unwrap()

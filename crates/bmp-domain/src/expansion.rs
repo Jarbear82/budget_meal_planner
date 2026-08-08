@@ -62,10 +62,28 @@ pub fn expand_recipe(
                     // Buy as finished item
                     requirements.push((yield_item_id.unwrap(), scaled_qty));
                 } else {
-                    // Expand sub-recipe
+                    // Expand sub-recipe with proper batch scaling multiplier
+                    let sub_multiplier = if let Some(sub_r) = sub_recipe {
+                        if let Some((_, yield_qty)) = sub_r.yields.first() {
+                            if yield_qty.amount > Decimal::ZERO {
+                                scaled_qty.amount / yield_qty.amount
+                            } else if sub_r.servings > Decimal::ZERO {
+                                scaled_qty.amount / sub_r.servings
+                            } else {
+                                scaled_qty.amount
+                            }
+                        } else if sub_r.servings > Decimal::ZERO {
+                            scaled_qty.amount / sub_r.servings
+                        } else {
+                            scaled_qty.amount
+                        }
+                    } else {
+                        scaled_qty.amount
+                    };
+
                     let sub_results = expand_recipe(
                         sub_recipe_id,
-                        scaled_qty.amount,
+                        sub_multiplier,
                         recipes,
                         items,
                         visited,

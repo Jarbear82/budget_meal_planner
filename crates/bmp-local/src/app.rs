@@ -71,10 +71,13 @@ impl BudgetMealPlannerApp {
         self.active_tab = tab_idx;
         cx.notify();
     }
+
 }
 
+use gpui_component::Root;
+
 impl Render for BudgetMealPlannerApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
         let tab_name = match active_tab {
             0 => "Items & Packages",
@@ -87,7 +90,12 @@ impl Render for BudgetMealPlannerApp {
             _ => "UI Primitives",
         };
 
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        let sheet_layer = Root::render_sheet_layer(window, cx);
+        let notification_layer = Root::render_notification_layer(window, cx);
+
         div()
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -138,5 +146,8 @@ impl Render for BudgetMealPlannerApp {
                     .child(format!("Active Context: {}", tab_name))
                     .right("v5.0 Local | File-Backed Default"),
             )
+            .children(dialog_layer)
+            .children(sheet_layer)
+            .children(notification_layer)
     }
 }

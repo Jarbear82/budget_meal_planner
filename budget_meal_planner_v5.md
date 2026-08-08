@@ -67,6 +67,8 @@ Prototype → test → refine. Domain logic is written and unit-tested first. In
 - Repository pattern for persistence
 - Application services / use-case layer
 - Event-driven message passing between front-end and services
+- State-driven in-memory UI rendering with cached view-model state (no synchronous DB queries in high-frequency `render()` passes)
+- Native programmatic window dialog management (`window.open_dialog` via root overlay layers)
 - Unidirectional data flow
 - Local-first; server is explicitly secondary
 
@@ -114,6 +116,8 @@ Prototype → test → refine. Domain logic is written and unit-tested first. In
 3. The primary product (`bmp-local`) shall run fully offline and require no network access or user accounts.
 4. All core domain logic shall reside in a pure, I/O-free crate (`bmp-domain`).
 5. Front-end and services communicate via straightforward, low-overhead event-driven message passing (commands / queries → view-models / events).
+6. The desktop UI (`bmp-local`) shall render dialog overlays programmatically using native window management (`window.open_dialog`) and explicit root view layer composition (`Root::render_dialog_layer`), bypassing inline view tree modal wrappers.
+7. The desktop UI views shall maintain cached struct fields for domain entities and render strictly from memory in `Render::render()`, reloading state asynchronously or via mutation listeners (`reload_data()`). No database disk queries or recursive cost calculations shall execute inside `render()`.
 
 ---
 
@@ -472,6 +476,8 @@ All requirements in Section 2.0 have corresponding automated tests. Domain tests
 |-------|--------|---------|
 | Any data created | App restarted | All data present (SQLite) |
 | Domain functions called | Inspect dependencies | Domain crate has no I/O; only services talk to storage |
+| User triggers modal dialog | Clicks action button | Modal opens via native `window.open_dialog` and renders on `Root::render_dialog_layer` |
+| View `render()` passes fire | Inspect execution trace | View renders purely from struct-level cached memory state; 0 disk DB queries inside `render()` |
 
 ### 6.2.2 Stretch Tests
 Tests for Section 3.0 features are required only when those features are implemented.
@@ -497,4 +503,4 @@ Tests for Section 3.0 features are required only when those features are impleme
 **Document Status:** SRS v5 – Rust Multi-Crate Edition with Unified Density-Centric Domain Model  
 **Primary Product:** `bmp-local` (local-first desktop application, GPUI preferred)  
 **Core Principle:** Pure domain as single source of truth + explicit services + thin front-ends. Local-first remains non-negotiable; server, mobile, and cloud/P2P are secondary/future.  
-**Key Change from v4:** Fully specified density model (g/ml normalized, on-the-fly bridges), Item/Recipe ownership and yield rules, substitute system, cycle-flag semantics, Make Recipe pre-configuration flow, per-store shopping, and explicit tests covering every core workflow and the major edge cases.
+**Key Change from v4:** Fully specified density model (g/ml normalized, on-the-fly bridges), Item/Recipe ownership and yield rules, substitute system, cycle-flag semantics, Make Recipe pre-configuration flow, per-store shopping, native window dialog management (`window.open_dialog`), state-driven cached in-memory UI rendering, and explicit tests covering every core workflow and the major edge cases.
