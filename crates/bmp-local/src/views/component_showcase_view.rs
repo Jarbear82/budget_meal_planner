@@ -48,7 +48,7 @@ impl Render for ComponentShowcaseView {
         let number_val = self.number_value;
         let selected_opt_id = self.selected_option_id.clone();
         let select_open = self.select_is_open;
-        let cb_checked = self.checkbox_checked;
+        let _cb_checked = self.checkbox_checked;
         let sel_date = self.selected_date;
         let date_open = self.datepicker_is_open;
         let dlg_open = self.dialog_is_open;
@@ -187,19 +187,16 @@ impl Render for ComponentShowcaseView {
                             .child(
                                 Checkbox::new("showcase-cb-1")
                                     .label("Optional Recipe Ingredient")
-                                    .helper_text("Check if this ingredient can be skipped during Make Recipe")
-                                    .checked(cb_checked)
+                                    .checked(self.checkbox_checked)
                                     .on_click(cx.listener(|this, checked, _window, cx| {
                                         this.checkbox_checked = *checked;
-                                        this.status_msg = format!("Checkbox checked: {}", checked);
                                         cx.notify();
                                     })),
                             )
                             .child(
                                 Checkbox::new("showcase-cb-2")
-                                    .label("Preferred Package Pinning")
-                                    .helper_text("Force shopping list generator to prefer this store package")
-                                    .checked(false),
+                                    .label("Preferred Package Pinning - Force shopping list store selection")
+                                    .checked(true),
                             ),
                     )
                     // Card 4: DatePicker & Modal Dialog Trigger
