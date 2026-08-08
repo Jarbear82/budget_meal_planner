@@ -92,4 +92,42 @@ mod tests {
         let updated_r1 = recipes.get(&r1_id).unwrap();
         assert!(updated_r1.ingredients[0].cycle_flag);
     }
+
+    #[test]
+    fn test_mixed_unit_shopping_and_pantry_subtraction() {
+        let store_id = StoreId::new();
+        let item = Item::new("Flour");
+        let item_id = item.id;
+
+        let mut items_map = HashMap::new();
+        items_map.insert(item_id, item);
+
+        let pkg = Package::new(item_id, store_id, Quantity::new(dec!(5), Unit::Pound).unwrap(), dec!(3.99));
+        let mut packages_map = HashMap::new();
+        packages_map.insert(item_id, vec![pkg]);
+
+        // Requirement: 1 Kilogram of Flour (~2.20462 lb)
+        let reqs = vec![(item_id, Quantity::new(dec!(1), Unit::Kilogram).unwrap())];
+
+        // Pantry: 453.59237 Grams of Flour (1 lb)
+        let pantry_entry = PantryEntry::new(
+            item_id,
+            Quantity::new(dec!(453.59237), Unit::Gram).unwrap(),
+            None,
+        );
+
+        let shopping_list = generate_shopping_list(
+            reqs,
+            &items_map,
+            &packages_map,
+            &[pantry_entry],
+            None,
+            None,
+        ).unwrap();
+
+        assert_eq!(shopping_list.items.len(), 1);
+        // After subtracting ~1 lb from ~2.20 lb requirement, remaining requirement ~1.20 lb.
+        // Requires 1 package of 5 lb.
+        assert_eq!(shopping_list.items[0].package_count, 1);
+    }
 }

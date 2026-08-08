@@ -43,10 +43,19 @@ pub fn generate_shopping_list(
     // 1. Consolidate requirements per ItemId
     let mut consolidated: HashMap<ItemId, Quantity> = HashMap::new();
     for (item_id, qty) in item_requirements {
+        let item_opt = items_map.get(&item_id);
         consolidated
             .entry(item_id)
             .and_modify(|existing| {
                 if existing.unit == qty.unit {
+                    existing.amount += qty.amount;
+                } else if let Some(item) = item_opt {
+                    if let Ok(converted) = item.convert_quantity(&qty, &existing.unit) {
+                        existing.amount += converted.amount;
+                    } else {
+                        existing.amount += qty.amount;
+                    }
+                } else {
                     existing.amount += qty.amount;
                 }
             })
@@ -56,9 +65,18 @@ pub fn generate_shopping_list(
     // 2. Subtract Pantry quantities
     for pantry in pantry_entries {
         if let Some(req) = consolidated.get_mut(&pantry.item_id) {
-            if req.unit == pantry.quantity.unit {
-                if req.amount > pantry.quantity.amount {
-                    req.amount -= pantry.quantity.amount;
+            let item_opt = items_map.get(&pantry.item_id);
+            let pantry_qty_in_req_unit = if req.unit == pantry.quantity.unit {
+                Some(pantry.quantity.amount)
+            } else if let Some(item) = item_opt {
+                item.convert_quantity(&pantry.quantity, &req.unit).ok().map(|q| q.amount)
+            } else {
+                None
+            };
+
+            if let Some(avail) = pantry_qty_in_req_unit {
+                if req.amount > avail {
+                    req.amount -= avail;
                 } else {
                     req.amount = Decimal::ZERO;
                 }
@@ -106,14 +124,17 @@ pub fn generate_shopping_list(
                     .min_by(|a, b| {
                         let unit_cost_a = a.price / a.quantity.amount;
                         let unit_cost_b = b.price / b.quantity.amount;
-                        unit_cost_a.partial_cmp(&unit_cost_b).unwrap()
+                        unit_cost_a.cmp(&unit_cost_b)
                     })
                     .copied()
                     .unwrap()
             });
 
-        // Round UP required quantity to full package count
-        let ratio = req_qty.amount / chosen_pkg.quantity.amount;
+        // Convert required quantity into package unit for correct ceiling rounding ratio
+        let req_in_pkg_unit = item
+            .convert_quantity(&req_qty, &chosen_pkg.quantity.unit)
+            .unwrap_or_else(|_| req_qty.clone());
+        let ratio = req_in_pkg_unit.amount / chosen_pkg.quantity.amount;
         let package_count = ratio.ceil().to_u32().unwrap_or(1).max(1);
         let line_total = chosen_pkg.price * Decimal::from(package_count);
 

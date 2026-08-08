@@ -63,7 +63,7 @@ impl Render for BudgetMealPlannerApp {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             // Custom Title Bar
-            .child(cx.new(|_| TitleBar::new("Budget Meal Planner v5", "Database Ready")))
+            .child(TitleBar::new("Budget Meal Planner v5", "Database Ready"))
             // Navigation TabBar using gpui_component::tab::TabBar & Tab
             .child(
                 div()

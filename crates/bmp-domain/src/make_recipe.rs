@@ -1,5 +1,6 @@
 use crate::error::DomainError;
-use crate::id::ItemId;
+use crate::id::{ItemId, RecipeId};
+use crate::item::PurchaseMode;
 use crate::recipe::Recipe;
 use crate::units::Quantity;
 use rust_decimal::Decimal;
@@ -34,7 +35,16 @@ pub struct MakeRecipeExecution {
 pub fn evaluate_make_recipe(
     recipe: &Recipe,
     config: &MakeRecipeConfig,
-    _items: &HashMap<ItemId, crate::item::Item>,
+    items: &HashMap<ItemId, crate::item::Item>,
+) -> Result<MakeRecipeExecution, DomainError> {
+    evaluate_make_recipe_full(recipe, config, items, &HashMap::new())
+}
+
+pub fn evaluate_make_recipe_full(
+    recipe: &Recipe,
+    config: &MakeRecipeConfig,
+    items: &HashMap<ItemId, crate::item::Item>,
+    recipes: &HashMap<RecipeId, Recipe>,
 ) -> Result<MakeRecipeExecution, DomainError> {
     if config.batches <= Decimal::ZERO {
         return Err(DomainError::NegativeQuantity(config.batches));
@@ -63,8 +73,37 @@ pub fn evaluate_make_recipe(
 
                 ingredients_to_consume.push((resolved_id, scaled_qty));
             }
-            crate::id::ItemOrRecipeId::Recipe(_) => {
-                // Nested sub-recipes: if evaluated directly here, handle as item or sub-expansion
+            crate::id::ItemOrRecipeId::Recipe(sub_recipe_id) => {
+                if let Some(sub_recipe) = recipes.get(&sub_recipe_id) {
+                    if let Some((yield_id, yield_qty)) = sub_recipe.yields.first() {
+                        let mode = items
+                            .get(yield_id)
+                            .map(|i| i.preferred_purchase_mode)
+                            .unwrap_or(PurchaseMode::BuyFinished);
+
+                        if mode == PurchaseMode::BuyFinished || edge.cycle_flag {
+                            let resolved_id = config
+                                .substitute_overrides
+                                .get(yield_id)
+                                .copied()
+                                .unwrap_or(*yield_id);
+                            ingredients_to_consume.push((resolved_id, scaled_qty));
+                        } else {
+                            let sub_batches = if yield_qty.amount > Decimal::ZERO {
+                                (scaled_qty.amount / yield_qty.amount) * config.batches
+                            } else {
+                                config.batches
+                            };
+                            let sub_config = MakeRecipeConfig {
+                                batches: sub_batches,
+                                ..Default::default()
+                            };
+                            if let Ok(sub_exec) = evaluate_make_recipe_full(sub_recipe, &sub_config, items, recipes) {
+                                ingredients_to_consume.extend(sub_exec.ingredients_to_consume);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

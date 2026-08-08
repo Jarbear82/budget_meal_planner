@@ -6,6 +6,10 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 use uuid::Uuid;
 
+fn parse_uuid(s: &str) -> Result<Uuid> {
+    Uuid::from_str(s).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+}
+
 impl Storage {
     // --- ITEM CRUD ---
 
@@ -50,7 +54,7 @@ impl Storage {
                 serde_json::from_str(&mode_str).unwrap_or(PurchaseMode::BuyFinished);
 
             let mut item = Item::new(name).with_purchase_mode(mode);
-            item.id = ItemId(Uuid::from_str(&id_str).unwrap());
+            item.id = ItemId(parse_uuid(&id_str)?);
             item.density = density;
             item.category = category;
 
@@ -80,7 +84,7 @@ impl Storage {
                 serde_json::from_str(&mode_str).unwrap_or(PurchaseMode::BuyFinished);
 
             let mut item = Item::new(name).with_purchase_mode(mode);
-            item.id = ItemId(Uuid::from_str(&id_str).unwrap());
+            item.id = ItemId(parse_uuid(&id_str)?);
             item.density = density;
             item.category = category;
 
@@ -95,8 +99,42 @@ impl Storage {
     }
 
     pub fn delete_item(&self, id: ItemId) -> Result<()> {
-        let conn = self.conn();
-        conn.execute("DELETE FROM items WHERE id = ?1", params![id.0.to_string()])?;
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+
+        let item_name: Option<String> = tx
+            .query_row(
+                "SELECT name FROM items WHERE id = ?1",
+                params![id.0.to_string()],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(name) = item_name {
+            let ref_count: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM ingredient_edges WHERE target_type = 'item' AND target_id = ?1",
+                    params![id.0.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            if ref_count > 0 {
+                // SRS §5.1: Flag/convert referenced items into a placeholder rather than orphan references
+                let placeholder_name = format!("[Deleted Item: {}]", name);
+                let mode_str = serde_json::to_string(&PurchaseMode::BuyFinished).unwrap_or_default();
+                tx.execute(
+                    "UPDATE items SET name = ?1, density = NULL, preferred_purchase_mode = ?2, category = 'Placeholder' WHERE id = ?3",
+                    params![placeholder_name, mode_str, id.0.to_string()],
+                )?;
+            } else {
+                tx.execute("DELETE FROM items WHERE id = ?1", params![id.0.to_string()])?;
+                tx.execute("DELETE FROM packages WHERE item_id = ?1", params![id.0.to_string()])?;
+                tx.execute("DELETE FROM pantry_entries WHERE item_id = ?1", params![id.0.to_string()])?;
+            }
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -118,7 +156,7 @@ impl Storage {
             let id_str: String = row.get(0)?;
             let name: String = row.get(1)?;
             let store = Store {
-                id: StoreId(Uuid::from_str(&id_str).unwrap()),
+                id: StoreId(parse_uuid(&id_str)?),
                 name,
             };
             Ok(store)
@@ -184,9 +222,49 @@ impl Storage {
             let last_seen = last_seen_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc)));
 
             let pkg = Package {
-                id: PackageId(Uuid::from_str(&id_str).unwrap()),
-                item_id: ItemId(Uuid::from_str(&item_id_str).unwrap()),
-                store_id: StoreId(Uuid::from_str(&store_id_str).unwrap()),
+                id: PackageId(parse_uuid(&id_str)?),
+                item_id: ItemId(parse_uuid(&item_id_str)?),
+                store_id: StoreId(parse_uuid(&store_id_str)?),
+                quantity: Quantity { amount, unit },
+                price,
+                last_seen,
+                is_preferred: is_pref != 0,
+            };
+            Ok(pkg)
+        })?;
+
+        let mut packages = Vec::new();
+        for r in rows {
+            packages.push(r?);
+        }
+        Ok(packages)
+    }
+
+    pub fn get_all_packages(&self) -> Result<Vec<Package>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, item_id, store_id, quantity_amount, quantity_unit, price, last_seen, is_preferred FROM packages",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let id_str: String = row.get(0)?;
+            let item_id_str: String = row.get(1)?;
+            let store_id_str: String = row.get(2)?;
+            let amount_str: String = row.get(3)?;
+            let unit_str: String = row.get(4)?;
+            let price_str: String = row.get(5)?;
+            let last_seen_str: Option<String> = row.get(6)?;
+            let is_pref: i32 = row.get(7)?;
+
+            let amount = Decimal::from_str(&amount_str).unwrap_or(Decimal::ZERO);
+            let unit: Unit = serde_json::from_str(&unit_str).unwrap_or(Unit::Each);
+            let price = Decimal::from_str(&price_str).unwrap_or(Decimal::ZERO);
+            let last_seen = last_seen_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc)));
+
+            let pkg = Package {
+                id: PackageId(parse_uuid(&id_str)?),
+                item_id: ItemId(parse_uuid(&item_id_str)?),
+                store_id: StoreId(parse_uuid(&store_id_str)?),
                 quantity: Quantity { amount, unit },
                 price,
                 last_seen,
@@ -240,8 +318,8 @@ impl Storage {
             let expiration = exp_str.and_then(|s| NaiveDate::from_str(&s).ok());
 
             let entry = PantryEntry {
-                id: PantryEntryId(Uuid::from_str(&id_str).unwrap()),
-                item_id: ItemId(Uuid::from_str(&item_id_str).unwrap()),
+                id: PantryEntryId(parse_uuid(&id_str)?),
+                item_id: ItemId(parse_uuid(&item_id_str)?),
                 quantity: Quantity { amount, unit },
                 expiration,
             };
@@ -264,12 +342,23 @@ impl Storage {
         Ok(())
     }
 
+    pub fn delete_pantry_entry(&self, entry_id: PantryEntryId) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "DELETE FROM pantry_entries WHERE id = ?1",
+            params![entry_id.0.to_string()],
+        )?;
+        Ok(())
+    }
+
     // --- RECIPE CRUD ---
 
     pub fn insert_recipe(&self, recipe: &Recipe) -> Result<()> {
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO recipes (id, name, instructions, servings) VALUES (?1, ?2, ?3, ?4)",
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+
+        tx.execute(
+            "INSERT OR REPLACE INTO recipes (id, name, instructions, servings) VALUES (?1, ?2, ?3, ?4)",
             params![
                 recipe.id.0.to_string(),
                 recipe.name,
@@ -278,9 +367,19 @@ impl Storage {
             ],
         )?;
 
+        tx.execute(
+            "DELETE FROM recipe_yields WHERE recipe_id = ?1",
+            params![recipe.id.0.to_string()],
+        )?;
+
+        tx.execute(
+            "DELETE FROM ingredient_edges WHERE recipe_id = ?1",
+            params![recipe.id.0.to_string()],
+        )?;
+
         for (item_id, qty) in &recipe.yields {
             let unit_str = serde_json::to_string(&qty.unit).unwrap_or_default();
-            conn.execute(
+            tx.execute(
                 "INSERT INTO recipe_yields (recipe_id, item_id, quantity_amount, quantity_unit)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -300,7 +399,7 @@ impl Storage {
             let unit_str = serde_json::to_string(&edge.quantity.unit).unwrap_or_default();
             let sub_str = edge.per_recipe_substitute.map(|s| s.0.to_string());
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO ingredient_edges
                  (recipe_id, target_type, target_id, quantity_amount, quantity_unit, required, cycle_flag, per_recipe_substitute)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -317,6 +416,7 @@ impl Storage {
             )?;
         }
 
+        tx.commit()?;
         Ok(())
     }
 
@@ -329,7 +429,7 @@ impl Storage {
             let instructions: String = row.get(2)?;
             let servings_str: String = row.get(3)?;
 
-            let recipe_id = RecipeId(Uuid::from_str(&id_str).unwrap());
+            let recipe_id = RecipeId(parse_uuid(&id_str)?);
             let servings = Decimal::from_str(&servings_str).unwrap_or(Decimal::ONE);
 
             let mut recipe = Recipe::new(name, servings).with_instructions(instructions);
@@ -345,7 +445,7 @@ impl Storage {
                 let item_id_str: String = yrow.get(0)?;
                 let amount_str: String = yrow.get(1)?;
                 let unit_str: String = yrow.get(2)?;
-                let item_id = ItemId(Uuid::from_str(&item_id_str).unwrap());
+                let item_id = ItemId(parse_uuid(&item_id_str)?);
                 let amount = Decimal::from_str(&amount_str).unwrap_or(Decimal::ONE);
                 let unit: Unit = serde_json::from_str(&unit_str).unwrap_or(Unit::Each);
                 Ok((item_id, Quantity { amount, unit }))
@@ -368,8 +468,8 @@ impl Storage {
                 let sub_str: Option<String> = erow.get(6)?;
 
                 let target = match target_type.as_str() {
-                    "recipe" => ItemOrRecipeId::Recipe(RecipeId(Uuid::from_str(&target_id_str).unwrap())),
-                    _ => ItemOrRecipeId::Item(ItemId(Uuid::from_str(&target_id_str).unwrap())),
+                    "recipe" => ItemOrRecipeId::Recipe(RecipeId(parse_uuid(&target_id_str)?)),
+                    _ => ItemOrRecipeId::Item(ItemId(parse_uuid(&target_id_str)?)),
                 };
                 let amount = Decimal::from_str(&amount_str).unwrap_or(Decimal::ONE);
                 let unit: Unit = serde_json::from_str(&unit_str).unwrap_or(Unit::Each);
@@ -446,6 +546,86 @@ impl Storage {
         Ok(())
     }
 
+    pub fn get_all_pre_planned_meals(&self) -> Result<Vec<PrePlannedMeal>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT id, name FROM pre_planned_meals")?;
+        let meal_rows = stmt.query_map([], |row| {
+            let id_str: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let id = PrePlannedMealId(parse_uuid(&id_str)?);
+            Ok((id, name))
+        })?;
+
+        let mut meals = Vec::new();
+        for m in meal_rows {
+            let (id, name) = m?;
+            let mut comp_stmt = conn.prepare(
+                "SELECT component_type, target_id_or_name, quantity_or_servings, unit_or_cost, leftover_item_id, leftover_qty_amount, leftover_qty_unit
+                 FROM meal_components WHERE meal_id = ?1",
+            )?;
+            let comp_rows = comp_stmt.query_map(params![id.0.to_string()], |crow| {
+                let c_type: String = crow.get(0)?;
+                let target: String = crow.get(1)?;
+                let qty_serv: String = crow.get(2)?;
+                let unit_cost: Option<String> = crow.get(3)?;
+                let leftover_id: Option<String> = crow.get(4)?;
+                let leftover_amt: Option<String> = crow.get(5)?;
+                let leftover_unit: Option<String> = crow.get(6)?;
+
+                let component = match c_type.as_str() {
+                    "recipe" => {
+                        let recipe_id = RecipeId(parse_uuid(&target)?);
+                        let servings = Decimal::from_str(&qty_serv).unwrap_or(Decimal::ONE);
+                        MealComponent::Recipe { recipe_id, servings }
+                    }
+                    "item" => {
+                        let item_id = ItemId(parse_uuid(&target)?);
+                        let amount = Decimal::from_str(&qty_serv).unwrap_or(Decimal::ONE);
+                        let unit: Unit = unit_cost
+                            .and_then(|u| serde_json::from_str(&u).ok())
+                            .unwrap_or(Unit::Each);
+                        MealComponent::Item {
+                            item_id,
+                            quantity: Quantity { amount, unit },
+                        }
+                    }
+                    "restaurant" => {
+                        let cost = Decimal::from_str(&qty_serv).unwrap_or(Decimal::ZERO);
+                        let leftover_yield = if let (Some(lid), Some(lamt), Some(lunit)) =
+                            (leftover_id, leftover_amt, leftover_unit)
+                        {
+                            let item_id = ItemId(parse_uuid(&lid)?);
+                            let amount = Decimal::from_str(&lamt).unwrap_or(Decimal::ZERO);
+                            let unit: Unit = serde_json::from_str(&lunit).unwrap_or(Unit::Each);
+                            Some((item_id, Quantity { amount, unit }))
+                        } else {
+                            None
+                        };
+                        MealComponent::Restaurant {
+                            name: target,
+                            cost,
+                            leftover_yield,
+                        }
+                    }
+                    _ => MealComponent::Restaurant {
+                        name: target,
+                        cost: Decimal::ZERO,
+                        leftover_yield: None,
+                    },
+                };
+                Ok(component)
+            })?;
+
+            let mut components = Vec::new();
+            for c in comp_rows {
+                components.push(c?);
+            }
+
+            meals.push(PrePlannedMeal { id, name, components });
+        }
+        Ok(meals)
+    }
+
     pub fn insert_scheduled_meal(&self, meal: &ScheduledMeal) -> Result<()> {
         let conn = self.conn();
         let source_type = match &meal.source {
@@ -491,9 +671,12 @@ impl Storage {
             let people: u32 = row.get(3)?;
             let consumed_str: Option<String> = row.get(4)?;
 
-            let id = ScheduledMealId(Uuid::from_str(&id_str).unwrap());
-            let source: ScheduledMealSource = serde_json::from_str(&payload_str).unwrap();
-            let datetime = DateTime::parse_from_rfc3339(&dt_str).unwrap().with_timezone(&Utc);
+            let id = ScheduledMealId(parse_uuid(&id_str)?);
+            let source: ScheduledMealSource = serde_json::from_str(&payload_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e)))?;
+            let datetime = DateTime::parse_from_rfc3339(&dt_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e)))?
+                .with_timezone(&Utc);
             let consumed = consumed_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc)));
 
             Ok(ScheduledMeal {
@@ -524,5 +707,28 @@ impl Storage {
             params![id, store_str, total.to_string(), datetime.to_rfc3339()],
         )?;
         Ok(id)
+    }
+
+    pub fn get_all_receipts(&self) -> Result<Vec<(String, Option<StoreId>, Decimal, DateTime<Utc>)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT id, store_id, total, datetime FROM receipts")?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let store_str: Option<String> = row.get(1)?;
+            let total_str: String = row.get(2)?;
+            let dt_str: String = row.get(3)?;
+
+            let store_id = store_str.and_then(|s| Uuid::from_str(&s).ok()).map(StoreId);
+            let total = Decimal::from_str(&total_str).unwrap_or(Decimal::ZERO);
+            let dt = DateTime::parse_from_rfc3339(&dt_str).unwrap_or_default().with_timezone(&Utc);
+
+            Ok((id, store_id, total, dt))
+        })?;
+
+        let mut receipts = Vec::new();
+        for r in rows {
+            receipts.push(r?);
+        }
+        Ok(receipts)
     }
 }

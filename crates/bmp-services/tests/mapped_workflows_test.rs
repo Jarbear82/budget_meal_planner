@@ -73,7 +73,18 @@ fn test_workflow_2_add_recipe_basic_and_edges() {
     let saved = services.recipes.save_recipe(recipe).unwrap();
     assert_eq!(saved.name, "Basic Cake");
     assert_eq!(saved.yields.len(), 2);
+    assert_eq!(saved.ingredients.len(), 2);
     assert!(!saved.ingredients[1].required);
+
+    // Re-save existing recipe multiple times (Bug #3 fix verification)
+    let re_saved = services.recipes.save_recipe(saved.clone()).unwrap();
+    assert_eq!(re_saved.yields.len(), 2);
+    assert_eq!(re_saved.ingredients.len(), 2);
+
+    let all = services.recipes.list_recipes().unwrap();
+    let found = all.iter().find(|r| r.id == saved.id).unwrap();
+    assert_eq!(found.yields.len(), 2);
+    assert_eq!(found.ingredients.len(), 2);
 }
 
 #[test]
@@ -182,14 +193,20 @@ fn test_workflow_4_and_5_meals_and_scheduling() {
     assert_eq!(meal.name, "Sunday Breakfast");
     assert_eq!(meal.components.len(), 3);
 
+    let saved_meal = services.meals.create_pre_planned_meal(&meal.name, meal.components.clone()).unwrap();
+
     // Basic & Edge: Schedule meal with datetime & people count
     let now = Utc::now();
-    let scheduled = ScheduledMeal::new(
-        ScheduledMealSource::PrePlanned(meal.id),
+    let scheduled = services.meals.schedule_meal(
+        ScheduledMealSource::PrePlanned(saved_meal.id),
         now,
         4, // people count
-    );
+    ).unwrap();
     assert_eq!(scheduled.people, 4);
+
+    // Verify shopping list generated from scheduled meal
+    let reqs = services.shopping.collect_scheduled_meal_requirements(None, None).unwrap();
+    assert!(!reqs.is_empty());
 }
 
 #[test]
@@ -324,7 +341,7 @@ fn test_workflow_9_toggle_buy_finished_vs_expand() {
     // Toggle: PreferMake -> expands into flour ingredients
     let mut bread_make = bread_item;
     bread_make.preferred_purchase_mode = PurchaseMode::PreferMake;
-    services.storage.insert_item(&bread_make).unwrap();
+    services.items.update_item(&bread_make).unwrap();
 
     let items2 = services.items.list_items().unwrap();
     let item_map2: HashMap<ItemId, Item> = items2.into_iter().map(|i| (i.id, i)).collect();
@@ -381,6 +398,11 @@ fn test_workflow_11_14_pantry_adjustment_and_consumption() {
     // Edge: Negative quantity rejected
     let err = services.pantry.update_quantity(entry.id, dec!(-2));
     assert!(err.is_err());
+
+    // Basic: Consume pantry quantity
+    services.pantry.consume_pantry_item(flour.id, dec!(3), Unit::Pound).unwrap();
+    let after_consume = services.pantry.get_pantry().unwrap();
+    assert_eq!(after_consume[0].quantity.amount, dec!(5));
 }
 
 #[test]
@@ -492,4 +514,49 @@ fn test_cross_cutting_persistence_restart() {
         assert_eq!(stores.len(), 1);
         assert_eq!(stores[0].name, "Kroger");
     }
+}
+
+#[test]
+fn test_analytics_summary() {
+    let services = setup_services();
+    let now = Utc::now();
+    services.analytics.record_receipt(None, dec!(45.50), now).unwrap();
+    services.analytics.record_receipt(None, dec!(12.25), now).unwrap();
+
+    let summary = services.analytics.get_overall_summary().unwrap();
+    assert_eq!(summary.actual_expenditure, dec!(57.75));
+}
+
+#[test]
+fn test_spec_gaps_fixes() {
+    let services = setup_services();
+    let store1 = services.items.add_store("Store 1").unwrap();
+    let store2 = services.items.add_store("Store 2").unwrap();
+
+    let flour = services.items.create_item("Flour", Some(dec!(0.53)), Some("Baking")).unwrap();
+    let pkg = services.items.add_package(flour.id, store1.id, dec!(5), Unit::Pound, dec!(4.99)).unwrap();
+
+    // 1. Move package to another store (SRS §2.2.2)
+    services.items.move_package_to_store(pkg.id, store2.id).unwrap();
+
+    // 2. Update package price on receipt actual!=projected (SRS §2.3.3)
+    services.items.update_package_price(pkg.id, dec!(5.49)).unwrap();
+
+    // 3. Nested recipe cost calculation (SRS §5.3.6)
+    let mut base_recipe = Recipe::new("Flour Base", dec!(1));
+    base_recipe = base_recipe.add_ingredient(IngredientEdge::item(flour.id, Quantity::new(dec!(1), Unit::Pound).unwrap()));
+    let saved_base = services.recipes.save_recipe(base_recipe).unwrap();
+
+    let mut parent_recipe = Recipe::new("Cake Parent", dec!(1));
+    parent_recipe = parent_recipe.add_ingredient(IngredientEdge::recipe(saved_base.id, Quantity::new(dec!(1), Unit::Pound).unwrap()));
+    let saved_parent = services.recipes.save_recipe(parent_recipe).unwrap();
+
+    let parent_cost = services.recipes.estimate_cost(saved_parent.id).unwrap();
+    assert!(parent_cost.price_per_batch > dec!(0));
+
+    // 4. Item deletion placeholder rule (SRS §5.1)
+    services.items.delete_item(flour.id).unwrap();
+    let items_after = services.items.list_items().unwrap();
+    let deleted_item = items_after.iter().find(|i| i.id == flour.id).unwrap();
+    assert!(deleted_item.name.contains("[Deleted Item: Flour]"));
 }

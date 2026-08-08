@@ -51,4 +51,36 @@ impl ItemService {
         self.storage.insert_store(&store).map_err(|e| e.to_string())?;
         Ok(store)
     }
+
+    pub fn update_item(&self, item: &Item) -> Result<(), String> {
+        self.storage.insert_item(item).map_err(|e| e.to_string())
+    }
+
+    pub fn delete_item(&self, item_id: ItemId) -> Result<(), String> {
+        self.storage.delete_item(item_id).map_err(|e| e.to_string())
+    }
+
+    pub fn update_package(&self, package: &Package) -> Result<(), String> {
+        self.storage.insert_package(package).map_err(|e| e.to_string())
+    }
+
+    pub fn move_package_to_store(&self, package_id: PackageId, new_store_id: StoreId) -> Result<(), String> {
+        let pkgs = self.storage.get_all_packages().map_err(|e| e.to_string())?;
+        if let Some(mut pkg) = pkgs.into_iter().find(|p| p.id == package_id) {
+            pkg.store_id = new_store_id;
+            pkg.last_seen = Some(chrono::Utc::now());
+            self.storage.insert_package(&pkg).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn update_package_price(&self, package_id: PackageId, new_price: Decimal) -> Result<(), String> {
+        let pkgs = self.storage.get_all_packages().map_err(|e| e.to_string())?;
+        if let Some(mut pkg) = pkgs.into_iter().find(|p| p.id == package_id) {
+            pkg.price = new_price;
+            pkg.last_seen = Some(chrono::Utc::now());
+            self.storage.insert_package(&pkg).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
 }

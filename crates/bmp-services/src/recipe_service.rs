@@ -30,16 +30,27 @@ impl RecipeService {
 
     pub fn estimate_cost(&self, recipe_id: RecipeId) -> Result<RecipeCost, String> {
         let recipes = self.list_recipes()?;
-        let recipe = recipes.into_iter().find(|r| r.id == recipe_id)
+        let recipes_map: HashMap<RecipeId, Recipe> = recipes.iter().map(|r| (r.id, r.clone())).collect();
+        let recipe = recipes_map.get(&recipe_id)
             .ok_or_else(|| "Recipe not found".to_string())?;
 
         let items = self.storage.get_all_items().map_err(|e| e.to_string())?;
+        let items_map: HashMap<ItemId, Item> = items.iter().map(|i| (i.id, i.clone())).collect();
+
         let mut pkgs_map = HashMap::new();
-        for item in items {
+        for item in &items {
             let pkgs = self.storage.get_packages_for_item(item.id).map_err(|e| e.to_string())?;
             pkgs_map.insert(item.id, pkgs);
         }
 
-        calculate_recipe_cost(&recipe, &pkgs_map).map_err(|e| e.to_string())
+        let mut visited = std::collections::HashSet::new();
+        calculate_recipe_cost_full(
+            recipe,
+            &pkgs_map,
+            Some(&items_map),
+            Some(&recipes_map),
+            &mut visited,
+        )
+        .map_err(|e| e.to_string())
     }
 }

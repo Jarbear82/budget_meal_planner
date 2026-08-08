@@ -57,4 +57,31 @@ impl Item {
         self.count_bridge = Some(bridge);
         self
     }
+
+    pub fn convert_quantity(
+        &self,
+        qty: &crate::units::Quantity,
+        target_unit: &crate::units::Unit,
+    ) -> Result<crate::units::Quantity, crate::error::DomainError> {
+        if qty.unit == *target_unit {
+            return Ok(qty.clone());
+        }
+        if let Ok(direct) = qty.convert_direct(target_unit) {
+            return Ok(direct);
+        }
+        if let Some(ref bridge) = self.count_bridge {
+            if let Ok(bridged) = bridge.convert(qty, target_unit, self.density) {
+                return Ok(bridged);
+            }
+        }
+        if let Some(ref density) = self.density {
+            if let Ok(dense) = density.convert(qty, target_unit) {
+                return Ok(dense);
+            }
+        }
+        Err(crate::error::DomainError::IncompatibleUnits {
+            from: format!("{}", qty.unit),
+            to: format!("{}", target_unit),
+        })
+    }
 }

@@ -1,6 +1,7 @@
 use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -39,11 +40,14 @@ impl MakeRecipeModal {
         config.batches = self.batches;
         config.selected_yield_item = self.selected_yield;
 
-        let execution = evaluate_make_recipe(recipe, &config, &items_map).map_err(|e| e.to_string())?;
+        let recipes_list = self.services.recipes.list_recipes()?;
+        let recipes_map: HashMap<RecipeId, Recipe> = recipes_list.into_iter().map(|r| (r.id, r)).collect();
+
+        let execution = evaluate_make_recipe_full(recipe, &config, &items_map, &recipes_map).map_err(|e| e.to_string())?;
 
         // Deduct consumed ingredients & add produced yield items to Pantry
         for (item_id, qty) in execution.ingredients_to_consume {
-            let _ = self.services.pantry.add_pantry_entry(item_id, qty.amount, qty.unit, None);
+            let _ = self.services.pantry.consume_pantry_item(item_id, qty.amount, qty.unit);
         }
         for (yield_id, qty) in execution.yields_produced {
             let _ = self.services.pantry.add_pantry_entry(yield_id, qty.amount, qty.unit, None);
@@ -51,6 +55,13 @@ impl MakeRecipeModal {
 
         self.status = format!("Recipe '{}' executed! Pantry updated.", recipe.name);
         Ok(self.status.clone())
+    }
+
+    pub fn adjust_batches(&mut self, delta: Decimal, cx: &mut Context<Self>) {
+        if self.batches + delta > dec!(0.0) {
+            self.batches += delta;
+            cx.notify();
+        }
     }
 }
 
@@ -77,18 +88,45 @@ impl Render for MakeRecipeModal {
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_2()
+                    .items_center()
+                    .gap_3()
                     .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Batch Scaling Factor:"))
                     .child(
+                        Button::new("btn-dec-batch")
+                            .secondary()
+                            .label("- 0.5x")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.adjust_batches(dec!(-0.5), cx);
+                            })),
+                    )
+                    .child(
                         div()
-                            .p_2()
+                            .px_3()
+                            .py_1()
                             .bg(cx.theme().muted)
                             .rounded_md()
                             .text_sm()
+                            .font_weight(FontWeight::BOLD)
                             .text_color(rgb(0x10b981))
-                            .child(format!("Batches: {}x", self.batches)),
+                            .child(format!("{}x", self.batches)),
+                    )
+                    .child(
+                        Button::new("btn-inc-batch")
+                            .secondary()
+                            .label("+ 0.5x")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.adjust_batches(dec!(0.5), cx);
+                            })),
                     ),
+            )
+            .child(
+                Button::new("btn-execute-cook")
+                    .primary()
+                    .label("Execute Cook Recipe & Update Pantry")
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        let _ = this.execute_cook();
+                        cx.notify();
+                    })),
             )
             .child(
                 div()

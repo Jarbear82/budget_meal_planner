@@ -1,13 +1,16 @@
+use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::*;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tag::Tag;
 use gpui_component::ActiveTheme;
+use rust_decimal_macros::dec;
 
 pub struct ItemsView {
     pub services: AppServices,
     pub _search_query: String,
+    pub status_msg: String,
 }
 
 impl ItemsView {
@@ -15,7 +18,38 @@ impl ItemsView {
         Self {
             services,
             _search_query: String::new(),
+            status_msg: "Ready".to_string(),
         }
+    }
+
+    pub fn add_sample_item(&mut self, cx: &mut Context<Self>) {
+        let count = self.services.items.list_items().map(|l| l.len()).unwrap_or(0);
+        let name = format!("New Custom Item {}", count + 1);
+        match self.services.items.create_item(&name, Some(dec!(1.0)), Some("Pantry")) {
+            Ok(item) => {
+                self.status_msg = format!("Added item: {}", item.name);
+            }
+            Err(e) => {
+                self.status_msg = format!("Error: {}", e);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_purchase_mode(&mut self, item_id: ItemId, cx: &mut Context<Self>) {
+        if let Ok(mut items) = self.services.items.list_items() {
+            if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
+                item.preferred_purchase_mode = match item.preferred_purchase_mode {
+                    PurchaseMode::BuyFinished => PurchaseMode::PreferMake,
+                    PurchaseMode::PreferMake => PurchaseMode::AskEveryTime,
+                    PurchaseMode::AskEveryTime => PurchaseMode::BuyFinished,
+                };
+                if self.services.items.update_item(item).is_ok() {
+                    self.status_msg = format!("Updated purchase mode for {}", item.name);
+                }
+            }
+        }
+        cx.notify();
     }
 }
 
@@ -53,7 +87,10 @@ impl Render for ItemsView {
                             .child(
                                 Button::new("btn-add-item")
                                     .primary()
-                                    .label("+ Add Item"),
+                                    .label("+ Add Item")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.add_sample_item(cx);
+                                    })),
                             ),
                     ),
             )
@@ -74,7 +111,7 @@ impl Render for ItemsView {
                             .rounded_md()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Search ingredients by name or category..."),
+                            .child(format!("Status: {}", self.status_msg)),
                     ),
             )
             .child(
@@ -99,10 +136,11 @@ impl Render for ItemsView {
                             .text_color(cx.theme().muted_foreground)
                             .child(div().w_1_4().child("Item Name"))
                             .child(div().w_1_4().child("Density (g/ml)"))
-                            .child(div().w_1_4().child("Purchase Mode"))
+                            .child(div().w_1_4().child("Purchase Mode (Click to Toggle)"))
                             .child(div().w_1_4().child("Category")),
                     )
                     .children(items.into_iter().map(|item| {
+                        let item_id = item.id;
                         let density_str = item
                             .density
                             .map(|d| format!("{} g/ml", d.g_per_ml.normalize()))
@@ -121,7 +159,16 @@ impl Render for ItemsView {
                             .text_color(cx.theme().foreground)
                             .child(div().w_1_4().font_weight(FontWeight::BOLD).child(item.name))
                             .child(div().w_1_4().child(Tag::new().child(density_str)))
-                            .child(div().w_1_4().child(Badge::new().child(mode_str)))
+                            .child(
+                                div().w_1_4().child(
+                                    Button::new(format!("btn-toggle-mode-{}", item_id))
+                                        .secondary()
+                                        .label(mode_str)
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.toggle_purchase_mode(item_id, cx);
+                                        })),
+                                ),
+                            )
                             .child(div().w_1_4().text_color(cx.theme().muted_foreground).child(category_str))
                     })),
             )
