@@ -10,6 +10,7 @@ use gpui_component::ActiveTheme;
 
 pub struct BudgetMealPlannerApp {
     pub _services: AppServices,
+    pub db_path_str: String,
     pub active_tab: usize,
     pub status_msg: String,
 
@@ -25,7 +26,19 @@ pub struct BudgetMealPlannerApp {
 
 impl BudgetMealPlannerApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let storage = Storage::in_memory().expect("Failed to initialize database");
+        let (storage, db_path_str) = match Storage::open_default() {
+            Ok(s) => {
+                let path_display = Storage::default_db_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "File-Backed DB".to_string());
+                (s, path_display)
+            }
+            Err(_) => (
+                Storage::in_memory().expect("Failed to initialize database"),
+                "In-Memory Fallback".to_string(),
+            ),
+        };
+
         let services = AppServices::new(storage.clone());
         let _ = seed_common_ingredients(&storage);
 
@@ -40,6 +53,7 @@ impl BudgetMealPlannerApp {
 
         Self {
             _services: services,
+            db_path_str,
             active_tab: 0,
             status_msg: "Welcome to Budget Meal Planner v5!".to_string(),
             items_view,
@@ -120,9 +134,9 @@ impl Render for BudgetMealPlannerApp {
             // Native gpui_component::status_bar::StatusBar
             .child(
                 StatusBar::new()
-                    .left("● SQLite Storage: In-Memory (Connected)")
+                    .left(format!("● SQLite Storage: {}", self.db_path_str))
                     .child(format!("Active Context: {}", tab_name))
-                    .right("v5.0 Local | 100% On-Device"),
+                    .right("v5.0 Local | File-Backed Default"),
             )
     }
 }
