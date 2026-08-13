@@ -154,4 +154,58 @@ mod tests {
         assert!(item.dietary_flags.contains(&DietaryFlag::Vegan));
         assert_eq!(item.nutrition.as_ref().unwrap().calories, Some(dec!(30)));
     }
+
+    #[test]
+    fn test_diamond_recipe_cost_calculation() {
+        use std::collections::HashSet;
+
+        let tomato = Item::new("Tomato");
+        let mut packages_map = HashMap::new();
+        let store_id = StoreId::new();
+        packages_map.insert(
+            tomato.id,
+            vec![Package::new(
+                tomato.id,
+                store_id,
+                Quantity::new(dec!(100), Unit::Gram).unwrap(),
+                dec!(10),
+            )],
+        );
+
+        // Sub-recipe: "Tomato Sauce" (uses 100g Tomato, costing $10)
+        let mut sauce_recipe = Recipe::new("Tomato Sauce", dec!(1));
+        sauce_recipe = sauce_recipe.add_yield(tomato.id, Quantity::new(dec!(1), Unit::Each).unwrap());
+        sauce_recipe = sauce_recipe.add_ingredient(IngredientEdge::item(
+            tomato.id,
+            Quantity::new(dec!(100), Unit::Gram).unwrap(),
+        ));
+
+        // Parent recipe: "Pizza Deluxe" (uses Tomato Sauce TWICE: base sauce + dip cup)
+        let mut pizza_recipe = Recipe::new("Pizza Deluxe", dec!(1));
+        pizza_recipe = pizza_recipe.add_ingredient(IngredientEdge::recipe(
+            sauce_recipe.id,
+            Quantity::new(dec!(1), Unit::Each).unwrap(),
+        ));
+        pizza_recipe = pizza_recipe.add_ingredient(IngredientEdge::recipe(
+            sauce_recipe.id,
+            Quantity::new(dec!(1), Unit::Each).unwrap(),
+        ));
+
+        let mut recipes_map = HashMap::new();
+        recipes_map.insert(sauce_recipe.id, sauce_recipe.clone());
+        recipes_map.insert(pizza_recipe.id, pizza_recipe.clone());
+
+        let mut visited = HashSet::new();
+        let cost = calculate_recipe_cost_full(
+            &pizza_recipe,
+            &packages_map,
+            None,
+            Some(&recipes_map),
+            &mut visited,
+        )
+        .unwrap();
+
+        // 2 * $10 = $20 total batch cost
+        assert_eq!(cost.price_per_batch, dec!(20));
+    }
 }

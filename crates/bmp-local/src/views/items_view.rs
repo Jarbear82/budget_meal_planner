@@ -3,17 +3,18 @@ use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::WindowExt;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::checkbox::Checkbox;
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_component::tag::Tag;
-use gpui_component::WindowExt;
 use gpui_component::{ActiveTheme, IndexPath, Selectable};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemGroupMode {
@@ -40,7 +41,7 @@ pub struct DomainListItem {
     pub base: ListItem,
     pub item: Item,
     pub selected: bool,
-    pub view: Entity<ItemsView>,
+    pub view: WeakEntity<ItemsView>,
 }
 
 impl Selectable for DomainListItem {
@@ -100,11 +101,9 @@ impl RenderOnce for DomainListItem {
                         )
                         .when(!flags.is_empty(), |this| {
                             this.child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .mt_1()
-                                    .children(flags.into_iter().map(|f| Tag::new().child(f.as_str()))),
+                                div().flex().gap_1().mt_1().children(
+                                    flags.into_iter().map(|f| Tag::new().child(f.as_str())),
+                                ),
                             )
                         }),
                 )
@@ -124,9 +123,11 @@ impl RenderOnce for DomainListItem {
                                 .secondary()
                                 .label("Edit")
                                 .on_click(move |_, window, cx| {
-                                    view_edit.update(cx, |this, cx| {
-                                        this.open_edit_item_modal(&item_clone, window, cx);
-                                    });
+                                    if let Some(view) = view_edit.upgrade() {
+                                        view.update(cx, |this, cx| {
+                                            this.open_edit_item_modal(&item_clone, window, cx);
+                                        });
+                                    }
                                 }),
                         )
                         .child(
@@ -134,9 +135,11 @@ impl RenderOnce for DomainListItem {
                                 .ghost()
                                 .label("🗑")
                                 .on_click(move |_, _, cx| {
-                                    view_delete.update(cx, |this, cx| {
-                                        this.delete_item(item_id, cx);
-                                    });
+                                    if let Some(view) = view_delete.upgrade() {
+                                        view.update(cx, |this, cx| {
+                                            this.delete_item(item_id, cx);
+                                        });
+                                    }
                                 }),
                         ),
                 ),
@@ -152,7 +155,7 @@ pub struct ItemListDelegate {
     pub group_mode: ItemGroupMode,
     pub sort_mode: ItemSortMode,
     pub dietary_filter: Option<DietaryFlag>,
-    pub view: Entity<ItemsView>,
+    pub view: WeakEntity<ItemsView>,
 }
 
 impl ItemListDelegate {
@@ -209,8 +212,12 @@ impl ItemListDelegate {
             .into_iter()
             .map(|(title, mut items)| {
                 match self.sort_mode {
-                    ItemSortMode::NameAsc => items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-                    ItemSortMode::NameDesc => items.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                    ItemSortMode::NameAsc => {
+                        items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    }
+                    ItemSortMode::NameDesc => {
+                        items.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase()))
+                    }
                     ItemSortMode::DensityDesc => items.sort_by(|a, b| {
                         let da = a.density.map(|d| d.g_per_ml).unwrap_or(Decimal::ZERO);
                         let db = b.density.map(|d| d.g_per_ml).unwrap_or(Decimal::ZERO);
@@ -231,7 +238,10 @@ impl ListDelegate for ItemListDelegate {
     }
 
     fn items_count(&self, section: usize, _: &App) -> usize {
-        self.sections.get(section).map(|s| s.items.len()).unwrap_or(0)
+        self.sections
+            .get(section)
+            .map(|s| s.items.len())
+            .unwrap_or(0)
     }
 
     fn render_section_header(
@@ -275,13 +285,18 @@ impl ListDelegate for ItemListDelegate {
     ) {
         self.selected_index = ix;
         let selected_item_id = ix.and_then(|idx| {
-            self.sections.get(idx.section).and_then(|s| s.items.get(idx.row).map(|i| i.id))
+            self.sections
+                .get(idx.section)
+                .and_then(|s| s.items.get(idx.row).map(|i| i.id))
         });
 
-        self.view.update(cx, |view, cx| {
-            view.selected_item_id = selected_item_id;
-            view.reload_packages(cx);
-        });
+        if let Some(view) = self.view.upgrade() {
+            view.update(cx, |this, cx| {
+                this.selected_item_id = selected_item_id;
+                this.reload_packages(cx);
+                cx.notify();
+            });
+        }
         cx.notify();
     }
 
@@ -310,18 +325,23 @@ pub struct ItemsView {
     pub cached_items: Vec<Item>,
     pub cached_stores: Vec<Store>,
     pub cached_packages: Vec<Package>,
-
-    // Selected Item for detail view / editing
     pub selected_item_id: Option<ItemId>,
 
-    // Item modal form state
+    // Item Form State
     pub editing_item_id: Option<ItemId>,
     pub item_form_name: String,
     pub item_form_density: Decimal,
     pub item_form_category: String,
     pub item_form_mode: PurchaseMode,
+    pub item_form_dietary_flags: HashSet<DietaryFlag>,
+    pub item_form_calories: Option<Decimal>,
+    pub item_form_protein: Option<Decimal>,
+    pub item_form_carbs: Option<Decimal>,
+    pub item_form_fat: Option<Decimal>,
+    pub item_form_fiber: Option<Decimal>,
+    pub item_form_sodium: Option<Decimal>,
 
-    // Package modal form state
+    // Package Form State
     pub pkg_form_item_id: Option<ItemId>,
     pub pkg_form_store_id: Option<StoreId>,
     pub pkg_form_amount: Decimal,
@@ -329,17 +349,17 @@ pub struct ItemsView {
     pub pkg_form_price: Decimal,
     pub pkg_form_preferred: bool,
 
-    // Store modal form state
+    // Store Form State
     pub store_form_name: String,
 
-    // Bridge modal form state
+    // Bridge Form State
     pub bridge_form_item_id: Option<ItemId>,
     pub bridge_from_amount: Decimal,
     pub bridge_from_unit: Unit,
     pub bridge_to_amount: Decimal,
     pub bridge_to_unit: Unit,
 
-    // Grouping & Filtering state
+    // Grouping & Sorting state
     pub group_mode: ItemGroupMode,
     pub sort_mode: ItemSortMode,
     pub dietary_filter: Option<DietaryFlag>,
@@ -347,7 +367,7 @@ pub struct ItemsView {
 
 impl ItemsView {
     pub fn new(services: AppServices, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let view = cx.entity().clone();
+        let view = cx.entity().downgrade();
         let delegate = ItemListDelegate {
             items: Vec::new(),
             sections: Vec::new(),
@@ -375,6 +395,13 @@ impl ItemsView {
             item_form_density: dec!(1.0),
             item_form_category: "Pantry".to_string(),
             item_form_mode: PurchaseMode::BuyFinished,
+            item_form_dietary_flags: HashSet::new(),
+            item_form_calories: None,
+            item_form_protein: None,
+            item_form_carbs: None,
+            item_form_fat: None,
+            item_form_fiber: None,
+            item_form_sodium: None,
 
             pkg_form_item_id: None,
             pkg_form_store_id: None,
@@ -445,6 +472,13 @@ impl ItemsView {
         self.item_form_density = dec!(1.0);
         self.item_form_category = "General".to_string();
         self.item_form_mode = PurchaseMode::BuyFinished;
+        self.item_form_dietary_flags = HashSet::new();
+        self.item_form_calories = None;
+        self.item_form_protein = None;
+        self.item_form_carbs = None;
+        self.item_form_fat = None;
+        self.item_form_fiber = None;
+        self.item_form_sodium = None;
         self.show_item_dialog(window, cx);
     }
 
@@ -462,6 +496,22 @@ impl ItemsView {
             .clone()
             .unwrap_or_else(|| "General".to_string());
         self.item_form_mode = item.preferred_purchase_mode;
+        self.item_form_dietary_flags = item.dietary_flags.iter().cloned().collect();
+        if let Some(nut) = &item.nutrition {
+            self.item_form_calories = nut.calories;
+            self.item_form_protein = nut.protein_g;
+            self.item_form_carbs = nut.net_carbs_g;
+            self.item_form_fat = nut.fat_g;
+            self.item_form_fiber = nut.fiber_g;
+            self.item_form_sodium = nut.sodium_mg;
+        } else {
+            self.item_form_calories = None;
+            self.item_form_protein = None;
+            self.item_form_carbs = None;
+            self.item_form_fat = None;
+            self.item_form_fiber = None;
+            self.item_form_sodium = None;
+        }
         self.show_item_dialog(window, cx);
     }
 
@@ -469,7 +519,7 @@ impl ItemsView {
         let view = cx.entity().clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
-            dialog.w(px(500.)).content(move |content, _, cx| {
+            dialog.w(px(550.)).content(move |content, _, cx| {
                 let view_read = view.read(cx);
                 let is_edit = view_read.editing_item_id.is_some();
                 let title = if is_edit {
@@ -488,17 +538,30 @@ impl ItemsView {
                 let form_category = view_read.item_form_category.clone();
                 let form_density = view_read.item_form_density;
                 let form_mode = view_read.item_form_mode;
+                let form_flags = view_read.item_form_dietary_flags.clone();
+
+                let form_cal = view_read.item_form_calories.unwrap_or(Decimal::ZERO);
+                let form_prot = view_read.item_form_protein.unwrap_or(Decimal::ZERO);
+                let form_carb = view_read.item_form_carbs.unwrap_or(Decimal::ZERO);
+                let form_fat = view_read.item_form_fat.unwrap_or(Decimal::ZERO);
 
                 let v_num = view.clone();
                 let v_mode = view.clone();
                 let v_save = view.clone();
+                let v_flags = view.clone();
+                let v_cal = view.clone();
+                let v_prot = view.clone();
+                let v_carb = view.clone();
+                let v_fat = view.clone();
+
+                let common_flags = DietaryFlag::all().to_vec();
 
                 content
                     .child(
                         DialogHeader::new()
                             .child(DialogTitle::new().child(title))
                             .child(DialogDescription::new().child(
-                                "Configure density (g/ml), category, and default purchase mode",
+                                "Configure density (g/ml), category, dietary flags, and nutrition",
                             )),
                     )
                     .child(
@@ -558,6 +621,150 @@ impl ItemsView {
                                             cx.notify();
                                         });
                                     }),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .child("Dietary Tags"),
+                                    )
+                                    .child(div().flex().flex_wrap().gap_2().children(
+                                        common_flags.into_iter().map(|flag| {
+                                            let is_checked = form_flags.contains(&flag);
+                                            let vf = v_flags.clone();
+                                            Checkbox::new(format!("cb-flag-{}", flag.as_str()))
+                                                .label(flag.as_str())
+                                                .checked(is_checked)
+                                                .on_click(move |checked, _window, cx| {
+                                                    let f = flag.clone();
+                                                    let is_set = *checked;
+                                                    vf.update(cx, |this, cx| {
+                                                        if is_set {
+                                                            this.item_form_dietary_flags.insert(f);
+                                                        } else {
+                                                            this.item_form_dietary_flags.remove(&f);
+                                                        }
+                                                        cx.notify();
+                                                    });
+                                                })
+                                        }),
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .child("Nutritional Info (Optional per 100g)"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .child(
+                                                NumberInput::new("input-cal", form_cal)
+                                                    .label("Calories")
+                                                    .step(dec!(10))
+                                                    .on_increment({
+                                                        let v = v_cal.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_calories =
+                                                                    Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    })
+                                                    .on_decrement({
+                                                        let v = v_cal.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_calories =
+                                                                    Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                NumberInput::new("input-prot", form_prot)
+                                                    .label("Protein (g)")
+                                                    .step(dec!(1))
+                                                    .on_increment({
+                                                        let v = v_prot.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_protein = Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    })
+                                                    .on_decrement({
+                                                        let v = v_prot.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_protein = Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                NumberInput::new("input-carb", form_carb)
+                                                    .label("Carbs (g)")
+                                                    .step(dec!(1))
+                                                    .on_increment({
+                                                        let v = v_carb.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_carbs = Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    })
+                                                    .on_decrement({
+                                                        let v = v_carb.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_carbs = Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                NumberInput::new("input-fat", form_fat)
+                                                    .label("Fat (g)")
+                                                    .step(dec!(1))
+                                                    .on_increment({
+                                                        let v = v_fat.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_fat = Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    })
+                                                    .on_decrement({
+                                                        let v = v_fat.clone();
+                                                        move |val, _, cx| {
+                                                            v.update(cx, |this, cx| {
+                                                                this.item_form_fat = Some(*val);
+                                                                cx.notify();
+                                                            })
+                                                        }
+                                                    }),
+                                            ),
+                                    ),
                             ),
                     )
                     .child(
@@ -599,12 +806,27 @@ impl ItemsView {
             None
         };
 
+        let nutrition = if self.item_form_calories.is_some() || self.item_form_protein.is_some() {
+            Some(NutritionalInfo {
+                calories: self.item_form_calories,
+                protein_g: self.item_form_protein,
+                net_carbs_g: self.item_form_carbs,
+                fat_g: self.item_form_fat,
+                fiber_g: self.item_form_fiber,
+                sodium_mg: self.item_form_sodium,
+            })
+        } else {
+            None
+        };
+
         if let Some(item_id) = self.editing_item_id {
             if let Ok(mut items) = self.services.items.list_items() {
                 if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
                     item.name = self.item_form_name.trim().to_string();
                     item.category = Some(self.item_form_category.trim().to_string());
                     item.preferred_purchase_mode = self.item_form_mode;
+                    item.dietary_flags = self.item_form_dietary_flags.iter().cloned().collect();
+                    item.nutrition = nutrition;
                     if let Some(d) = density_opt {
                         if let Ok(den) = Density::new(d) {
                             item.density = Some(den);
@@ -629,7 +851,11 @@ impl ItemsView {
                 density_opt,
                 Some(self.item_form_category.trim()),
             ) {
-                Ok(item) => {
+                Ok(mut item) => {
+                    item.preferred_purchase_mode = self.item_form_mode;
+                    item.dietary_flags = self.item_form_dietary_flags.iter().cloned().collect();
+                    item.nutrition = nutrition;
+                    let _ = self.services.items.update_item(&item);
                     self.status_msg = format!("Created item: {}", item.name);
                 }
                 Err(e) => {
@@ -669,7 +895,10 @@ impl ItemsView {
                     .child(
                         DialogHeader::new()
                             .child(DialogTitle::new().child("Register Store"))
-                            .child(DialogDescription::new().child("Add local grocery store for package tracking")),
+                            .child(
+                                DialogDescription::new()
+                                    .child("Add local grocery store for package tracking"),
+                            ),
                     )
                     .child(
                         div().py_4().child(
@@ -729,7 +958,7 @@ impl Render for ItemsView {
         let selected_item = self
             .selected_item_id
             .and_then(|id| self.cached_items.iter().find(|i| i.id == id).cloned());
-        let has_selected_item = selected_item.is_some();
+        let _has_selected_item = selected_item.is_some();
         let _selected_item_packages = self.cached_packages.clone();
 
         let group_options = vec![
@@ -767,13 +996,52 @@ impl Render for ItemsView {
                                     .text_2xl()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(cx.theme().foreground)
-                                    .child("Items, Stores & Package Matrix"),
+                                    .child("Domain Items & Density Matrix"),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Manage domain ingredients, densities, package pricing, and unit bridges"),
+                                    .child("Manage physical conversion densities, store packages, and mass-per-each bridges"),
+                            ),
+                    )
+                    .child(Alert::new("items-status-alert", format!("Status: {}", self.status_msg))),
+            )
+            // Controls & Filter Bar
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Select::new("select-item-group-mode", group_options)
+                                    .selected_id(Some(format!("{:?}", self.group_mode)))
+                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
+                                        this.group_mode = match opt.id.as_str() {
+                                            "PurchaseMode" => ItemGroupMode::PurchaseMode,
+                                            "DensityStatus" => ItemGroupMode::DensityStatus,
+                                            _ => ItemGroupMode::Category,
+                                        };
+                                        this.reload_data(cx);
+                                    })),
+                            )
+                            .child(
+                                Select::new("select-item-sort-mode", sort_options)
+                                    .selected_id(Some(format!("{:?}", self.sort_mode)))
+                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
+                                        this.sort_mode = match opt.id.as_str() {
+                                            "NameDesc" => ItemSortMode::NameDesc,
+                                            "DensityDesc" => ItemSortMode::DensityDesc,
+                                            _ => ItemSortMode::NameAsc,
+                                        };
+                                        this.reload_data(cx);
+                                    })),
                             ),
                     )
                     .child(
@@ -781,149 +1049,121 @@ impl Render for ItemsView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(Badge::new().child(format!(
-                                "Items: {}",
-                                self.cached_items.len()
-                            )))
-                            .child(Badge::new().child(format!("Stores: {}", stores.len())))
                             .child(
-                                Button::new("btn-register-store")
-                                    .secondary()
-                                    .label("+ Store")
+                                Button::new("btn-open-create-item")
+                                    .primary()
+                                    .label("+ Add Ingredient / Item")
                                     .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.open_add_store_modal(window, cx);
+                                        this.open_create_item_modal(window, cx);
                                     })),
                             )
                             .child(
-                                Button::new("btn-create-item")
-                                    .primary()
-                                    .label("+ New Item")
+                                Button::new("btn-open-add-store")
+                                    .secondary()
+                                    .label("+ Add Store")
                                     .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.open_create_item_modal(window, cx);
+                                        this.open_add_store_modal(window, cx);
                                     })),
                             ),
                     ),
             )
-            // Section Grouping & Sorting Controls Bar
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .p_3()
-                    .bg(cx.theme().muted)
-                    .rounded_lg()
-                    .child(
-                        div().w_56().child(
-                            Select::new("select-items-group-mode", group_options)
-                                .label("Section Grouping")
-                                .selected_id(Some(format!("{:?}", self.group_mode)))
-                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                    this.group_mode = match opt.id.as_str() {
-                                        "PurchaseMode" => ItemGroupMode::PurchaseMode,
-                                        "DensityStatus" => ItemGroupMode::DensityStatus,
-                                        _ => ItemGroupMode::Category,
-                                    };
-                                    this.reload_data(cx);
-                                })),
-                        ),
-                    )
-                    .child(
-                        div().w_48().child(
-                            Select::new("select-items-sort-mode", sort_options)
-                                .label("Sorting")
-                                .selected_id(Some(format!("{:?}", self.sort_mode)))
-                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                    this.sort_mode = match opt.id.as_str() {
-                                        "NameDesc" => ItemSortMode::NameDesc,
-                                        "DensityDesc" => ItemSortMode::DensityDesc,
-                                        _ => ItemSortMode::NameAsc,
-                                    };
-                                    this.reload_data(cx);
-                                })),
-                        ),
-                    )
-                    .child(Alert::new("items-status-alert", format!("Status: {}", self.status_msg))),
-            )
-            // Split Matrix View (Items Table + Selected Item Details Drawer)
+            // Main Grid Layout: Items Virtualized List on Left, Detail / Package Panel on Right
             .child(
                 div()
                     .flex()
                     .gap_4()
                     .flex_1()
-                    // Main Items Table List with Sticky Section Headers
                     .child(
                         div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .p_4()
-                            .bg(cx.theme().background)
+                            .w_1_2()
+                            .h_full()
                             .border_1()
                             .border_color(cx.theme().border)
-                            .rounded_lg()
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_between()
-                                    .pb_2()
-                                    .border_b_1()
-                                    .border_color(cx.theme().border)
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(div().w_1_4().child("Item Name"))
-                                    .child(div().w_1_4().child("Density (g/ml)"))
-                                    .child(div().w_1_4().child("Purchase Mode"))
-                                    .child(div().w_1_4().child("Actions")),
-                            )
-                            .child(
-                                List::new(&self.items_list)
-                                    .flex_1()
-                                    .w_full(),
-                            ),
+                            .rounded_xl()
+                            .overflow_hidden()
+                            .child(List::new(&self.items_list)),
                     )
-                    // Selected Item Drawer
                     .child(
                         div()
-                            .w_80()
+                            .w_1_2()
                             .flex()
                             .flex_col()
                             .gap_4()
-                            .p_4()
-                            .bg(cx.theme().background)
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .rounded_lg()
-                            .when_some(selected_item, |this, item| {
-                                this.child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .child(
-                                            div()
-                                                .font_weight(FontWeight::BOLD)
-                                                .text_base()
-                                                .child(item.name.clone()),
-                                        ),
-                                )
-                            })
-                            .when(!has_selected_item, |this| {
-                                this.child(
+                            .child(
+                                if let Some(item) = selected_item {
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .items_center()
-                                        .justify_center()
-                                        .h_full()
-                                        .text_center()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Select an item row to view store packages and details."),
-                                )
-                            }),
+                                        .gap_4()
+                                        .p_4()
+                                        .bg(cx.theme().muted)
+                                        .border_1()
+                                        .border_color(cx.theme().border)
+                                        .rounded_xl()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .text_lg()
+                                                        .font_weight(FontWeight::BOLD)
+                                                        .child(format!("Selected: {}", item.name)),
+                                                )
+                                                .child(Badge::new().child(format!("{:?}", item.preferred_purchase_mode))),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(format!(
+                                                    "Density: {} | Category: {}",
+                                                    item.density.map(|d| format!("{} g/ml", d.g_per_ml.normalize())).unwrap_or_else(|| "Not set".to_string()),
+                                                    item.category.as_deref().unwrap_or("Uncategorized")
+                                                )),
+                                        )
+                                } else {
+                                    div()
+                                        .p_6()
+                                        .bg(cx.theme().muted)
+                                        .border_1()
+                                        .border_color(cx.theme().border)
+                                        .rounded_xl()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child("Select an ingredient from the list to view and configure store packages or count bridges."),
+                                        )
+                                },
+                            )
+                            // Registered Stores Summary
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .p_4()
+                                    .bg(cx.theme().background)
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .rounded_xl()
+                                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Registered Grocery Stores"))
+                                    .child(
+                                        if stores.is_empty() {
+                                            div().text_xs().text_color(cx.theme().muted_foreground).child("No stores added yet. Click '+ Add Store' above.")
+                                        } else {
+                                            div()
+                                                .flex()
+                                                .flex_wrap()
+                                                .gap_2()
+                                                .children(stores.into_iter().map(|s| {
+                                                    Badge::new().child(s.name)
+                                                }))
+                                        }
+                                    ),
+                            ),
                     ),
             )
     }

@@ -189,7 +189,7 @@ impl Storage {
             .ok();
 
         if let Some(name) = item_name {
-            let ref_count: i64 = tx
+            let edge_refs: i64 = tx
                 .query_row(
                     "SELECT COUNT(*) FROM ingredient_edges WHERE target_type = 'item' AND target_id = ?1",
                     params![id.0.to_string()],
@@ -197,7 +197,25 @@ impl Storage {
                 )
                 .unwrap_or(0);
 
-            if ref_count > 0 {
+            let yield_refs: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM recipe_yields WHERE item_id = ?1",
+                    params![id.0.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let meal_refs: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM meal_components WHERE component_type = 'item' AND target_id_or_name = ?1",
+                    params![id.0.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let total_refs = edge_refs + yield_refs + meal_refs;
+
+            if total_refs > 0 {
                 // SRS §5.1: Flag/convert referenced items into a placeholder rather than orphan references
                 let placeholder_name = format!("[Deleted Item: {}]", name);
                 let mode_str = serde_json::to_string(&PurchaseMode::BuyFinished).unwrap_or_default();

@@ -108,6 +108,8 @@ pub fn calculate_recipe_cost_full(
         total_batch_cost
     };
 
+    visited.remove(&recipe.id);
+
     Ok(RecipeCost {
         price_per_batch: total_batch_cost,
         price_per_serving,

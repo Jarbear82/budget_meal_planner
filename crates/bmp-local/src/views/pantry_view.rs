@@ -41,7 +41,7 @@ pub struct PantryListItem {
     pub entry: PantryEntry,
     pub item_name: String,
     pub selected: bool,
-    pub view: Entity<PantryView>,
+    pub view: WeakEntity<PantryView>,
 }
 
 impl Selectable for PantryListItem {
@@ -120,9 +120,11 @@ impl RenderOnce for PantryListItem {
                                 .secondary()
                                 .label("- 100")
                                 .on_click(move |_, _, cx| {
-                                    view_dec.update(cx, |this, cx| {
-                                        this.update_quantity(entry_id, dec!(-100), cx);
-                                    });
+                                    if let Some(view) = view_dec.upgrade() {
+                                        view.update(cx, |this, cx| {
+                                            this.update_quantity(entry_id, dec!(-100), cx);
+                                        });
+                                    }
                                 }),
                         )
                         .child(
@@ -130,9 +132,11 @@ impl RenderOnce for PantryListItem {
                                 .secondary()
                                 .label("+ 100")
                                 .on_click(move |_, _, cx| {
-                                    view_inc.update(cx, |this, cx| {
-                                        this.update_quantity(entry_id, dec!(100), cx);
-                                    });
+                                    if let Some(view) = view_inc.upgrade() {
+                                        view.update(cx, |this, cx| {
+                                            this.update_quantity(entry_id, dec!(100), cx);
+                                        });
+                                    }
                                 }),
                         )
                         .child(
@@ -140,9 +144,11 @@ impl RenderOnce for PantryListItem {
                                 .ghost()
                                 .label("🗑")
                                 .on_click(move |_, _, cx| {
-                                    view_del.update(cx, |this, cx| {
-                                        this.delete_entry(entry_id, cx);
-                                    });
+                                    if let Some(view) = view_del.upgrade() {
+                                        view.update(cx, |this, cx| {
+                                            this.delete_entry(entry_id, cx);
+                                        });
+                                    }
                                 }),
                         ),
                 ),
@@ -158,7 +164,7 @@ pub struct PantryListDelegate {
     pub query: String,
     pub group_mode: PantryGroupMode,
     pub sort_mode: PantrySortMode,
-    pub view: Entity<PantryView>,
+    pub view: WeakEntity<PantryView>,
 }
 
 impl PantryListDelegate {
@@ -331,7 +337,7 @@ pub struct PantryView {
 
 impl PantryView {
     pub fn new(services: AppServices, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let view = cx.entity().clone();
+        let view = cx.entity().downgrade();
         let delegate = PantryListDelegate {
             entries: Vec::new(),
             items: Vec::new(),
