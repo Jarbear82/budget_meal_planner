@@ -7,18 +7,288 @@ use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
-use gpui_component::scroll::ScrollableElement;
+use gpui_component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_component::tag::Tag;
 use gpui_component::WindowExt;
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, IndexPath, Selectable};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecipeGroupMode {
+    MealType,
+    Alphabetical,
+    Servings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecipeSortMode {
+    NameAsc,
+    NameDesc,
+    ServingsDesc,
+}
+
+pub struct RecipeSection {
+    pub title: String,
+    pub recipes: Vec<Recipe>,
+}
+
+#[derive(IntoElement)]
+pub struct RecipeListItem {
+    pub base: ListItem,
+    pub recipe: Recipe,
+    pub selected: bool,
+    pub view: Entity<RecipesView>,
+}
+
+impl Selectable for RecipeListItem {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
+    }
+}
+
+impl RenderOnce for RecipeListItem {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let recipe_id = self.recipe.id;
+        let recipe_clone = self.recipe.clone();
+        let rec_make = recipe_clone.clone();
+        let rec_edit = recipe_clone.clone();
+        let yields_count = self.recipe.yields.len();
+        let ing_count = self.recipe.ingredients.len();
+        let has_cycle = self.recipe.ingredients.iter().any(|i| i.cycle_flag);
+
+        let view_make = self.view.clone();
+        let view_edit = self.view.clone();
+        let view_delete = self.view.clone();
+
+        self.base.py_2().px_2().rounded_md().child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .w_full()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::BOLD)
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .child(self.recipe.name.clone()),
+                        )
+                        .when(has_cycle, |this| {
+                            this.child(Tag::new().child("Cycle Aware"))
+                        }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{} Servings", self.recipe.servings.normalize()))
+                        .child(format!("{} Ingredients, {} Yields", ing_count, yields_count)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .mt_1()
+                        .child(
+                            Button::new(format!("btn-make-{}", recipe_id))
+                                .primary()
+                                .label("Make Recipe")
+                                .on_click(move |_, window, cx| {
+                                    view_make.update(cx, |this, cx| {
+                                        this.open_make_recipe_modal(&rec_make, window, cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new(format!("btn-edit-rec-{}", recipe_id))
+                                .secondary()
+                                .label("Edit")
+                                .on_click(move |_, window, cx| {
+                                    view_edit.update(cx, |this, cx| {
+                                        this.open_edit_recipe_modal(&rec_edit, window, cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new(format!("btn-del-rec-{}", recipe_id))
+                                .ghost()
+                                .label("🗑")
+                                .on_click(move |_, _, cx| {
+                                    view_delete.update(cx, |this, cx| {
+                                        this.delete_recipe(recipe_id, cx);
+                                    });
+                                }),
+                        ),
+                ),
+        )
+    }
+}
+
+pub struct RecipeListDelegate {
+    pub recipes: Vec<Recipe>,
+    pub sections: Vec<RecipeSection>,
+    pub selected_index: Option<IndexPath>,
+    pub query: String,
+    pub group_mode: RecipeGroupMode,
+    pub sort_mode: RecipeSortMode,
+    pub view: Entity<RecipesView>,
+}
+
+impl RecipeListDelegate {
+    pub fn prepare(&mut self, query: String) {
+        self.query = query;
+        let q = self.query.to_lowercase();
+
+        let filtered: Vec<Recipe> = self
+            .recipes
+            .iter()
+            .filter(|r| {
+                if q.is_empty() {
+                    true
+                } else {
+                    r.name.to_lowercase().contains(&q)
+                }
+            })
+            .cloned()
+            .collect();
+
+        let mut groups: BTreeMap<String, Vec<Recipe>> = BTreeMap::new();
+        for recipe in filtered {
+            let key = match self.group_mode {
+                RecipeGroupMode::MealType => recipe
+                    .meal_type
+                    .clone()
+                    .unwrap_or_else(|| "General Recipes".to_string()),
+                RecipeGroupMode::Alphabetical => {
+                    let first_char = recipe
+                        .name
+                        .chars()
+                        .next()
+                        .unwrap_or('A')
+                        .to_uppercase()
+                        .to_string();
+                    format!("Letter {}", first_char)
+                }
+                RecipeGroupMode::Servings => {
+                    format!("{} Servings", recipe.servings.normalize())
+                }
+            };
+            groups.entry(key).or_default().push(recipe);
+        }
+
+        self.sections = groups
+            .into_iter()
+            .map(|(title, mut recipes)| {
+                match self.sort_mode {
+                    RecipeSortMode::NameAsc => recipes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                    RecipeSortMode::NameDesc => recipes.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                    RecipeSortMode::ServingsDesc => recipes.sort_by(|a, b| b.servings.cmp(&a.servings)),
+                }
+                RecipeSection { title, recipes }
+            })
+            .collect();
+    }
+}
+
+impl ListDelegate for RecipeListDelegate {
+    type Item = RecipeListItem;
+
+    fn sections_count(&self, _: &App) -> usize {
+        self.sections.len()
+    }
+
+    fn items_count(&self, section: usize, _: &App) -> usize {
+        self.sections.get(section).map(|s| s.recipes.len()).unwrap_or(0)
+    }
+
+    fn render_section_header(
+        &mut self,
+        section: usize,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<impl IntoElement> {
+        let sec = self.sections.get(section)?;
+        Some(
+            div()
+                .px_3()
+                .py_1_5()
+                .bg(cx.theme().muted)
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(cx.theme().foreground)
+                        .child(sec.title.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{} recipes", sec.recipes.len())),
+                ),
+        )
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: Option<IndexPath>,
+        _: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) {
+        self.selected_index = ix;
+        let selected_recipe_id = ix.and_then(|idx| {
+            self.sections.get(idx.section).and_then(|s| s.recipes.get(idx.row).map(|r| r.id))
+        });
+
+        self.view.update(cx, |view, cx| {
+            view.selected_recipe_id = selected_recipe_id;
+            view.reload_data(cx);
+        });
+        cx.notify();
+    }
+
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
+        let selected = Some(ix) == self.selected_index;
+        let recipe = self.sections.get(ix.section)?.recipes.get(ix.row)?;
+        Some(RecipeListItem {
+            base: ListItem::new(format!("recipe-row-{}", recipe.id)).selected(selected),
+            recipe: recipe.clone(),
+            selected,
+            view: self.view.clone(),
+        })
+    }
+}
 
 pub struct RecipesView {
     pub services: AppServices,
-    pub search_query: String,
+    pub recipe_list: Entity<ListState<RecipeListDelegate>>,
     pub status_msg: String,
 
     pub cached_recipes: Vec<Recipe>,
@@ -34,6 +304,7 @@ pub struct RecipesView {
     pub recipe_form_instructions: String,
     pub recipe_form_yields: Vec<(ItemId, Quantity)>,
     pub recipe_form_ingredients: Vec<IngredientEdge>,
+    pub recipe_form_meal_type: String,
 
     // Ingredient addition form sub-state
     pub ing_target_is_recipe: bool,
@@ -53,13 +324,30 @@ pub struct RecipesView {
     pub make_batches: Decimal,
     pub make_selected_yield: Option<ItemId>,
     pub make_status: String,
+
+    // Grouping & Sorting state
+    pub group_mode: RecipeGroupMode,
+    pub sort_mode: RecipeSortMode,
 }
 
 impl RecipesView {
-    pub fn new(services: AppServices) -> Self {
-        let mut view = Self {
+    pub fn new(services: AppServices, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let view = cx.entity().clone();
+        let delegate = RecipeListDelegate {
+            recipes: Vec::new(),
+            sections: Vec::new(),
+            selected_index: None,
+            query: String::new(),
+            group_mode: RecipeGroupMode::MealType,
+            sort_mode: RecipeSortMode::NameAsc,
+            view,
+        };
+
+        let recipe_list = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+
+        let mut view_state = Self {
             services,
-            search_query: String::new(),
+            recipe_list,
             status_msg: "Recipes manager ready".to_string(),
 
             cached_recipes: Vec::new(),
@@ -74,6 +362,7 @@ impl RecipesView {
             recipe_form_instructions: String::new(),
             recipe_form_yields: Vec::new(),
             recipe_form_ingredients: Vec::new(),
+            recipe_form_meal_type: "Dinner".to_string(),
 
             ing_target_is_recipe: false,
             ing_target_item_id: None,
@@ -90,12 +379,15 @@ impl RecipesView {
             make_batches: dec!(1.0),
             make_selected_yield: None,
             make_status: String::new(),
+
+            group_mode: RecipeGroupMode::MealType,
+            sort_mode: RecipeSortMode::NameAsc,
         };
-        view.reload_data();
-        view
+        view_state.reload_data(cx);
+        view_state
     }
 
-    pub fn reload_data(&mut self) {
+    pub fn reload_data(&mut self, cx: &mut Context<Self>) {
         self.cached_recipes = self.services.recipes.list_recipes().unwrap_or_default();
         self.cached_items = self.services.items.list_items().unwrap_or_default();
         if let Some(id) = self.selected_recipe_id {
@@ -103,6 +395,24 @@ impl RecipesView {
         } else {
             self.cached_cost = None;
         }
+
+        let recipe_list = self.recipe_list.clone();
+        let cached_recipes = self.cached_recipes.clone();
+        let group_mode = self.group_mode;
+        let sort_mode = self.sort_mode;
+
+        cx.defer(move |cx| {
+            recipe_list.update(cx, |list, cx| {
+                list.delegate_mut().recipes = cached_recipes;
+                list.delegate_mut().group_mode = group_mode;
+                list.delegate_mut().sort_mode = sort_mode;
+
+                let query = list.delegate().query.clone();
+                list.delegate_mut().prepare(query);
+                cx.notify();
+            });
+        });
+        cx.notify();
     }
 
     pub fn open_create_recipe_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -115,6 +425,7 @@ impl RecipesView {
         self.recipe_form_instructions = "Mix ingredients thoroughly and cook as directed.".to_string();
         self.recipe_form_yields = Vec::new();
         self.recipe_form_ingredients = Vec::new();
+        self.recipe_form_meal_type = "Dinner".to_string();
 
         self.ing_target_is_recipe = false;
         self.ing_target_item_id = first_item;
@@ -141,6 +452,7 @@ impl RecipesView {
         self.recipe_form_instructions = recipe.instructions.clone();
         self.recipe_form_yields = recipe.yields.clone();
         self.recipe_form_ingredients = recipe.ingredients.clone();
+        self.recipe_form_meal_type = recipe.meal_type.clone().unwrap_or_else(|| "Dinner".to_string());
 
         self.ing_target_is_recipe = false;
         self.ing_target_item_id = first_item;
@@ -185,8 +497,6 @@ impl RecipesView {
                         SelectOption::new("Ounce", "Ounce (oz)"),
                         SelectOption::new("Pound", "Pound (lb)"),
                         SelectOption::new("Each", "Each (count)"),
-                        SelectOption::new("Batch", "Batch"),
-                        SelectOption::new("Serving", "Serving"),
                     ];
 
                     let form_name = view_read.recipe_form_name.clone();
@@ -330,7 +640,7 @@ impl RecipesView {
                                         )
                                         .child(
                                             Checkbox::new("cb-ing-required")
-                                                .label("Required Ingredient (unchecked = optional)")
+                                                .label("Required Ingredient (must not be omitted)")
                                                 .checked(ing_required)
                                                 .on_click(move |checked, _window, cx| {
                                                     v_req.update(cx, |this, cx| {
@@ -340,12 +650,23 @@ impl RecipesView {
                                                 }),
                                         )
                                         .child(
-                                            Button::new("btn-add-ing-edge")
+                                            Button::new("btn-add-edge-to-form")
                                                 .secondary()
-                                                .label("+ Add Ingredient Edge")
+                                                .label("+ Add Edge to Recipe")
                                                 .on_click(move |_, _window, cx| {
                                                     v_add_edge.update(cx, |this, cx| {
-                                                        this.add_ingredient_to_form(cx);
+                                                        if let Some(target_id) = this.ing_target_item_id {
+                                                            if let Ok(qty) = Quantity::new(this.ing_amount, this.ing_unit.clone()) {
+                                                                this.recipe_form_ingredients.push(IngredientEdge {
+                                                                    target: ItemOrRecipeId::Item(target_id),
+                                                                    quantity: qty,
+                                                                    required: this.ing_required,
+                                                                    per_recipe_substitute: this.ing_substitute_id,
+                                                                    cycle_flag: false,
+                                                                });
+                                                            }
+                                                        }
+                                                        cx.notify();
                                                     });
                                                 }),
                                         ),
@@ -355,37 +676,29 @@ impl RecipesView {
                                         .flex()
                                         .flex_col()
                                         .gap_1()
-                                        .child(div().text_xs().font_weight(FontWeight::BOLD).child(format!("Configured Ingredients ({})", form_ingredients.len())))
+                                        .child(div().text_xs().font_weight(FontWeight::BOLD).child("Current Ingredients List"))
                                         .children(form_ingredients.into_iter().enumerate().map(|(idx, edge)| {
-                                            let target_str = match edge.target {
-                                                ItemOrRecipeId::Item(iid) => items
-                                                    .iter()
-                                                    .find(|i| i.id == iid)
-                                                    .map(|i| i.name.clone())
-                                                    .unwrap_or_else(|| "Item".to_string()),
-                                                ItemOrRecipeId::Recipe(_) => "Sub-Recipe".to_string(),
-                                            };
-
                                             let v_rem = v_rem_edge.clone();
-                                            let edge_id = format!("form-edge-{}", idx);
                                             div()
-                                                .id(ElementId::from(edge_id))
                                                 .flex()
                                                 .items_center()
                                                 .justify_between()
                                                 .p_2()
+                                                .bg(cx.theme().background)
                                                 .border_1()
                                                 .border_color(cx.theme().border)
                                                 .rounded_md()
-                                                .text_xs()
-                                                .child(format!("{} - {} {}", target_str, edge.quantity.amount, edge.quantity.unit))
+                                                .child(div().text_xs().child(format!("{:?} - {} {}", edge.target, edge.quantity.amount, edge.quantity.unit)))
                                                 .child(
                                                     Button::new(format!("btn-rem-edge-{}", idx))
                                                         .ghost()
-                                                        .label("✕")
+                                                        .label("Remove")
                                                         .on_click(move |_, _window, cx| {
                                                             v_rem.update(cx, |this, cx| {
-                                                                this.remove_ingredient_from_form(idx, cx);
+                                                                if idx < this.recipe_form_ingredients.len() {
+                                                                    this.recipe_form_ingredients.remove(idx);
+                                                                }
+                                                                cx.notify();
                                                             });
                                                         }),
                                                 )
@@ -418,85 +731,10 @@ impl RecipesView {
         });
     }
 
-    pub fn add_ingredient_to_form(&mut self, cx: &mut Context<Self>) {
-        let target = if self.ing_target_is_recipe {
-            match self.ing_target_recipe_id {
-                Some(rid) => ItemOrRecipeId::Recipe(rid),
-                None => {
-                    self.status_msg = "Error: Please select a target sub-recipe".to_string();
-                    return;
-                }
-            }
-        } else {
-            match self.ing_target_item_id {
-                Some(iid) => ItemOrRecipeId::Item(iid),
-                None => {
-                    self.status_msg = "Error: Please select a target item".to_string();
-                    return;
-                }
-            }
-        };
-
-        let qty = match Quantity::new(self.ing_amount, self.ing_unit.clone()) {
-            Ok(q) => q,
-            Err(e) => {
-                self.status_msg = format!("Error: {}", e);
-                return;
-            }
-        };
-
-        let edge = IngredientEdge {
-            target,
-            quantity: qty,
-            required: self.ing_required,
-            cycle_flag: false,
-            per_recipe_substitute: self.ing_substitute_id,
-        };
-
-        self.recipe_form_ingredients.push(edge);
-        self.status_msg = "Added ingredient edge".to_string();
-        cx.notify();
-    }
-
-    pub fn remove_ingredient_from_form(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if idx < self.recipe_form_ingredients.len() {
-            self.recipe_form_ingredients.remove(idx);
-        }
-        cx.notify();
-    }
-
-    pub fn add_yield_to_form(&mut self, cx: &mut Context<Self>) {
-        let item_id = match self.yield_item_id {
-            Some(id) => id,
-            None => {
-                self.status_msg = "Error: Please select a yield item".to_string();
-                return;
-            }
-        };
-
-        let qty = match Quantity::new(self.yield_amount, self.yield_unit.clone()) {
-            Ok(q) => q,
-            Err(e) => {
-                self.status_msg = format!("Error: {}", e);
-                return;
-            }
-        };
-
-        self.recipe_form_yields.push((item_id, qty));
-        self.status_msg = "Added yield definition".to_string();
-        cx.notify();
-    }
-
-    pub fn remove_yield_from_form(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if idx < self.recipe_form_yields.len() {
-            self.recipe_form_yields.remove(idx);
-        }
-        cx.notify();
-    }
-
     pub fn save_recipe(&mut self, cx: &mut Context<Self>) {
         if self.recipe_form_name.trim().is_empty() {
             self.status_msg = "Error: Recipe name cannot be empty".to_string();
+            cx.notify();
             return;
         }
 
@@ -511,6 +749,7 @@ impl RecipesView {
         recipe.instructions = self.recipe_form_instructions.trim().to_string();
         recipe.yields = self.recipe_form_yields.clone();
         recipe.ingredients = self.recipe_form_ingredients.clone();
+        recipe.meal_type = Some(self.recipe_form_meal_type.trim().to_string());
 
         match self.services.recipes.save_recipe(recipe) {
             Ok(saved) => {
@@ -521,8 +760,7 @@ impl RecipesView {
                 self.status_msg = format!("Error saving recipe: {}", e);
             }
         }
-        self.reload_data();
-        cx.notify();
+        self.reload_data(cx);
     }
 
     pub fn delete_recipe(&mut self, recipe_id: RecipeId, cx: &mut Context<Self>) {
@@ -537,8 +775,7 @@ impl RecipesView {
                 self.status_msg = format!("Error deleting recipe: {}", e);
             }
         }
-        self.reload_data();
-        cx.notify();
+        self.reload_data(cx);
     }
 
     pub fn open_make_recipe_modal(&mut self, recipe: &Recipe, window: &mut Window, cx: &mut Context<Self>) {
@@ -658,7 +895,6 @@ impl RecipesView {
 
         match evaluate_make_recipe_full(&recipe, &config, &items_map, &recipes_map) {
             Ok(exec) => {
-                // Deduct consumed ingredients & add produced yields to Pantry
                 for (item_id, qty) in exec.ingredients_to_consume {
                     let _ = self.services.pantry.consume_pantry_item(item_id, qty.amount, qty.unit);
                 }
@@ -673,33 +909,31 @@ impl RecipesView {
                 self.make_status = format!("Execution Error: {}", e);
             }
         }
-        self.reload_data();
-        cx.notify();
+        self.reload_data(cx);
     }
 }
 
 impl Render for RecipesView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recipes = self.cached_recipes.clone();
         let items = self.cached_items.clone();
-
-        let filtered_recipes: Vec<Recipe> = recipes
-            .into_iter()
-            .filter(|r| {
-                if self.search_query.trim().is_empty() {
-                    true
-                } else {
-                    r.name.to_lowercase().contains(&self.search_query.to_lowercase())
-                }
-            })
-            .collect();
 
         let selected_recipe = self
             .selected_recipe_id
-            .and_then(|id| filtered_recipes.iter().find(|r| r.id == id).cloned());
+            .and_then(|id| self.cached_recipes.iter().find(|r| r.id == id).cloned());
         let has_selected_recipe = selected_recipe.is_some();
-
         let recipe_cost_estimate = self.cached_cost.clone();
+
+        let group_options = vec![
+            SelectOption::new("MealType", "Group by Meal Type"),
+            SelectOption::new("Alphabetical", "Group Alphabetically"),
+            SelectOption::new("Servings", "Group by Servings"),
+        ];
+
+        let sort_options = vec![
+            SelectOption::new("NameAsc", "Sort A-Z"),
+            SelectOption::new("NameDesc", "Sort Z-A"),
+            SelectOption::new("ServingsDesc", "Sort by Servings"),
+        ];
 
         div()
             .flex()
@@ -738,7 +972,10 @@ impl Render for RecipesView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(Badge::new().child(format!("Saved Recipes: {}", filtered_recipes.len())))
+                            .child(Badge::new().child(format!(
+                                "Saved Recipes: {}",
+                                self.cached_recipes.len()
+                            )))
                             .child(
                                 Button::new("btn-new-recipe")
                                     .primary()
@@ -749,15 +986,54 @@ impl Render for RecipesView {
                             ),
                     ),
             )
-            // Status Banner
-            .child(Alert::new("recipes-status-alert", format!("Status: {}", self.status_msg)))
+            // Section Grouping & Sorting Controls Toolbar
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .bg(cx.theme().muted)
+                    .rounded_lg()
+                    .child(
+                        div().w_56().child(
+                            Select::new("select-recipe-group-mode", group_options)
+                                .label("Section Grouping")
+                                .selected_id(Some(format!("{:?}", self.group_mode)))
+                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
+                                    this.group_mode = match opt.id.as_str() {
+                                        "Alphabetical" => RecipeGroupMode::Alphabetical,
+                                        "Servings" => RecipeGroupMode::Servings,
+                                        _ => RecipeGroupMode::MealType,
+                                    };
+                                    this.reload_data(cx);
+                                })),
+                        ),
+                    )
+                    .child(
+                        div().w_48().child(
+                            Select::new("select-recipe-sort-mode", sort_options)
+                                .label("Sorting")
+                                .selected_id(Some(format!("{:?}", self.sort_mode)))
+                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
+                                    this.sort_mode = match opt.id.as_str() {
+                                        "NameDesc" => RecipeSortMode::NameDesc,
+                                        "ServingsDesc" => RecipeSortMode::ServingsDesc,
+                                        _ => RecipeSortMode::NameAsc,
+                                    };
+                                    this.reload_data(cx);
+                                })),
+                        ),
+                    )
+                    .child(Alert::new("recipes-status-alert", format!("Status: {}", self.status_msg))),
+            )
             // Split Master-Detail View
             .child(
                 div()
                     .flex()
                     .gap_4()
                     .flex_1()
-                    // Recipes List Sidebar
+                    // Recipes List Sidebar with Sticky Section Headers
                     .child(
                         div()
                             .w_1_3()
@@ -777,101 +1053,9 @@ impl Render for RecipesView {
                                     .child("RECIPE CATALOG"),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .overflow_y_scrollbar()
-                                    .children(filtered_recipes.into_iter().map(|recipe| {
-                                        let recipe_id = recipe.id;
-                                        let is_sel = self.selected_recipe_id == Some(recipe_id);
-                                        let yields_count = recipe.yields.len();
-                                        let ing_count = recipe.ingredients.len();
-                                        let recipe_clone = recipe.clone();
-
-                                        let has_cycle = recipe.ingredients.iter().any(|i| i.cycle_flag);
-
-                                        let card_id = format!("recipe-card-{}", recipe_id);
-                                        div()
-                                            .id(ElementId::from(card_id))
-                                            .flex()
-                                            .flex_col()
-                                            .gap_1()
-                                            .p_3()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(cx.theme().border)
-                                            .cursor_pointer()
-                                            .bg(if is_sel {
-                                                cx.theme().accent
-                                            } else {
-                                                cx.theme().background
-                                            })
-                                            .hover(|s| s.bg(cx.theme().muted))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.selected_recipe_id = Some(recipe_id);
-                                                this.reload_data();
-                                                cx.notify();
-                                            }))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .child(
-                                                        div()
-                                                            .font_weight(FontWeight::BOLD)
-                                                            .text_sm()
-                                                            .child(recipe.name.clone()),
-                                                    )
-                                                    .when(has_cycle, |this| {
-                                                        this.child(Tag::new().child("Cycle Aware"))
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(format!("{} Servings", recipe.servings.normalize()))
-                                                    .child(format!("{} Ingredients, {} Yields", ing_count, yields_count)),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .mt_1()
-                                                    .child({
-                                                        let rec = recipe_clone.clone();
-                                                        Button::new(format!("btn-make-{}", recipe_id))
-                                                            .primary()
-                                                            .label("Make Recipe")
-                                                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                                                this.open_make_recipe_modal(&rec, window, cx);
-                                                            }))
-                                                    })
-                                                    .child({
-                                                        let rec = recipe_clone.clone();
-                                                        Button::new(format!("btn-edit-rec-{}", recipe_id))
-                                                            .secondary()
-                                                            .label("Edit")
-                                                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                                                this.open_edit_recipe_modal(&rec, window, cx);
-                                                            }))
-                                                    })
-                                                    .child(
-                                                        Button::new(format!("btn-del-rec-{}", recipe_id))
-                                                            .ghost()
-                                                            .label("🗑")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.delete_recipe(recipe_id, cx);
-                                                            })),
-                                                    ),
-                                            )
-                                    })),
+                                List::new(&self.recipe_list)
+                                    .flex_1()
+                                    .w_full(),
                             ),
                     )
                     // Recipe Details & Live Cost Calculator Pane
@@ -887,7 +1071,6 @@ impl Render for RecipesView {
                             .border_color(cx.theme().border)
                             .rounded_lg()
                             .when_some(selected_recipe, |this, recipe| {
-                                let _recipe_id = recipe.id;
                                 let recipe_clone = recipe.clone();
 
                                 this.child(

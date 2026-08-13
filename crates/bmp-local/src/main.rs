@@ -25,7 +25,7 @@ fn main() {
 
         cx.open_window(options, |window, cx| {
             eprintln!("Runtime window decorations = {:?}", window.window_decorations());
-            let app_view = cx.new(|cx| BudgetMealPlannerApp::new(cx));
+            let app_view = cx.new(|cx| BudgetMealPlannerApp::new(window, cx));
             cx.new(|cx| Root::new(app_view, window, cx))
         })
         .unwrap();

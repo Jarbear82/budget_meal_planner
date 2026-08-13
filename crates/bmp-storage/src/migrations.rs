@@ -11,7 +11,9 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             name TEXT NOT NULL,
             density TEXT,
             preferred_purchase_mode TEXT NOT NULL,
-            category TEXT
+            category TEXT,
+            nutrition TEXT,
+            dietary_flags TEXT
         );
 
         CREATE TABLE IF NOT EXISTS stores (
@@ -34,7 +36,8 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             instructions TEXT NOT NULL,
-            servings TEXT NOT NULL
+            servings TEXT NOT NULL,
+            meal_type TEXT
         );
 
         CREATE TABLE IF NOT EXISTS recipe_yields (
@@ -112,5 +115,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             datetime TEXT NOT NULL
         );
         ",
-    )
+    )?;
+
+    // Safe column additions for existing databases
+    let _ = conn.execute("ALTER TABLE items ADD COLUMN nutrition TEXT;", []);
+    let _ = conn.execute("ALTER TABLE items ADD COLUMN dietary_flags TEXT;", []);
+    let _ = conn.execute("ALTER TABLE recipes ADD COLUMN meal_type TEXT;", []);
+
+    Ok(())
 }

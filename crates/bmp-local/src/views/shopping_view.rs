@@ -42,7 +42,7 @@ pub struct ShoppingView {
 }
 
 impl ShoppingView {
-    pub fn new(services: AppServices) -> Self {
+    pub fn new(services: AppServices, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
             services,
             status_msg: "Shopping list manager ready".to_string(),
@@ -64,11 +64,11 @@ impl ShoppingView {
             custom_amount: dec!(1),
             custom_unit: Unit::Each,
         };
-        view.reload_data();
+        view.reload_data(cx);
         view
     }
 
-    pub fn reload_data(&mut self) {
+    pub fn reload_data(&mut self, _cx: &mut Context<Self>) {
         self.cached_items = self.services.items.list_items().unwrap_or_default();
         self.cached_stores = self.services.items.list_stores().unwrap_or_default();
     }
@@ -259,7 +259,6 @@ impl ShoppingView {
             None => return,
         };
 
-        // 1. Record receipt in Analytics
         let receipt_res = self.services.analytics.record_receipt(
             self.selected_store_id,
             self.receipt_actual_total,
@@ -275,7 +274,6 @@ impl ShoppingView {
             }
         };
 
-        // 2. Deposit checked items to Pantry if option selected
         let mut deposited_count = 0;
         if self.deposit_to_pantry {
             for line in &list.items {
@@ -296,7 +294,6 @@ impl ShoppingView {
             }
         }
 
-        // 3. Update Package prices if option selected & total differs (SRS §2.3.3)
         let mut updated_packages_count = 0;
         if self.update_package_prices && list.total > Decimal::ZERO && self.receipt_actual_total != list.total {
             let scale_factor = self.receipt_actual_total / list.total;
@@ -476,6 +473,7 @@ impl ShoppingView {
             Some(id) => id,
             None => {
                 self.status_msg = "Error: Select an item to add".to_string();
+                cx.notify();
                 return;
             }
         };
@@ -484,6 +482,7 @@ impl ShoppingView {
             Ok(q) => q,
             Err(e) => {
                 self.status_msg = format!("Error: {}", e);
+                cx.notify();
                 return;
             }
         };

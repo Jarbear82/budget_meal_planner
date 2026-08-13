@@ -57,6 +57,7 @@ pub struct Recipe {
     pub ingredients: Vec<IngredientEdge>,
     pub instructions: String,
     pub servings: Decimal,
+    pub meal_type: Option<String>,
 }
 
 impl Recipe {
@@ -68,6 +69,7 @@ impl Recipe {
             ingredients: Vec::new(),
             instructions: String::new(),
             servings,
+            meal_type: None,
         }
     }
 
@@ -83,6 +85,11 @@ impl Recipe {
 
     pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.instructions = instructions.into();
+        self
+    }
+
+    pub fn with_meal_type(mut self, meal_type: impl Into<String>) -> Self {
+        self.meal_type = Some(meal_type.into());
         self
     }
 }

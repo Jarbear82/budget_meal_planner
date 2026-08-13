@@ -17,16 +17,24 @@ impl Storage {
         let conn = self.conn();
         let density_str = item.density.map(|d| d.g_per_ml.to_string());
         let mode_str = serde_json::to_string(&item.preferred_purchase_mode).unwrap_or_default();
+        let nut_str = item.nutrition.as_ref().map(|n| serde_json::to_string(n).unwrap_or_default());
+        let flags_str = if item.dietary_flags.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&item.dietary_flags).unwrap_or_default())
+        };
 
         conn.execute(
-            "INSERT OR REPLACE INTO items (id, name, density, preferred_purchase_mode, category)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR REPLACE INTO items (id, name, density, preferred_purchase_mode, category, nutrition, dietary_flags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 item.id.0.to_string(),
                 item.name,
                 density_str,
                 mode_str,
-                item.category
+                item.category,
+                nut_str,
+                flags_str
             ],
         )?;
 
@@ -51,7 +59,7 @@ impl Storage {
     pub fn get_item(&self, id: ItemId) -> Result<Option<Item>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, density, preferred_purchase_mode, category FROM items WHERE id = ?1",
+            "SELECT id, name, density, preferred_purchase_mode, category, nutrition, dietary_flags FROM items WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id.0.to_string()])?;
 
@@ -61,6 +69,8 @@ impl Storage {
             let density_str: Option<String> = row.get(2)?;
             let mode_str: String = row.get(3)?;
             let category: Option<String> = row.get(4)?;
+            let nut_str: Option<String> = row.get(5)?;
+            let flags_str: Option<String> = row.get(6)?;
 
             let density = density_str
                 .and_then(|s| Decimal::from_str(&s).ok())
@@ -68,11 +78,15 @@ impl Storage {
 
             let mode: PurchaseMode =
                 serde_json::from_str(&mode_str).unwrap_or(PurchaseMode::BuyFinished);
+            let nutrition: Option<NutritionalInfo> = nut_str.and_then(|s| serde_json::from_str(&s).ok());
+            let dietary_flags: Vec<DietaryFlag> = flags_str.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
             let mut item = Item::new(name).with_purchase_mode(mode);
             item.id = ItemId(parse_uuid(&id_str)?);
             item.density = density;
             item.category = category;
+            item.nutrition = nutrition;
+            item.dietary_flags = dietary_flags;
 
             // Re-hydrate count_bridge if present
             let mut bridge_stmt = conn.prepare(
@@ -104,7 +118,7 @@ impl Storage {
     pub fn get_all_items(&self) -> Result<Vec<Item>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, density, preferred_purchase_mode, category FROM items ORDER BY name",
+            "SELECT id, name, density, preferred_purchase_mode, category, nutrition, dietary_flags FROM items ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
             let id_str: String = row.get(0)?;
@@ -112,6 +126,8 @@ impl Storage {
             let density_str: Option<String> = row.get(2)?;
             let mode_str: String = row.get(3)?;
             let category: Option<String> = row.get(4)?;
+            let nut_str: Option<String> = row.get(5)?;
+            let flags_str: Option<String> = row.get(6)?;
 
             let density = density_str
                 .and_then(|s| Decimal::from_str(&s).ok())
@@ -119,11 +135,15 @@ impl Storage {
 
             let mode: PurchaseMode =
                 serde_json::from_str(&mode_str).unwrap_or(PurchaseMode::BuyFinished);
+            let nutrition: Option<NutritionalInfo> = nut_str.and_then(|s| serde_json::from_str(&s).ok());
+            let dietary_flags: Vec<DietaryFlag> = flags_str.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
             let mut item = Item::new(name).with_purchase_mode(mode);
             item.id = ItemId(parse_uuid(&id_str)?);
             item.density = density;
             item.category = category;
+            item.nutrition = nutrition;
+            item.dietary_flags = dietary_flags;
 
             Ok(item)
         })?;
@@ -422,12 +442,13 @@ impl Storage {
         let tx = conn.transaction()?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO recipes (id, name, instructions, servings) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO recipes (id, name, instructions, servings, meal_type) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 recipe.id.0.to_string(),
                 recipe.name,
                 recipe.instructions,
-                recipe.servings.to_string()
+                recipe.servings.to_string(),
+                recipe.meal_type
             ],
         )?;
 
@@ -494,18 +515,20 @@ impl Storage {
 
     pub fn get_all_recipes(&self) -> Result<Vec<Recipe>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT id, name, instructions, servings FROM recipes ORDER BY name")?;
+        let mut stmt = conn.prepare("SELECT id, name, instructions, servings, meal_type FROM recipes ORDER BY name")?;
         let rows = stmt.query_map([], |row| {
             let id_str: String = row.get(0)?;
             let name: String = row.get(1)?;
             let instructions: String = row.get(2)?;
             let servings_str: String = row.get(3)?;
+            let meal_type: Option<String> = row.get(4)?;
 
             let recipe_id = RecipeId(parse_uuid(&id_str)?);
             let servings = Decimal::from_str(&servings_str).unwrap_or(Decimal::ONE);
 
             let mut recipe = Recipe::new(name, servings).with_instructions(instructions);
             recipe.id = recipe_id;
+            recipe.meal_type = meal_type;
             Ok(recipe)
         })?;
 

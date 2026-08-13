@@ -130,4 +130,28 @@ mod tests {
         // Requires 1 package of 5 lb.
         assert_eq!(shopping_list.items[0].package_count, 1);
     }
+
+    #[test]
+    fn test_item_nutrition_and_dietary_flags() {
+        let mut item = Item::new("Almond Milk")
+            .with_dietary_flag(DietaryFlag::GlutenFree)
+            .with_dietary_flag(DietaryFlag::DairyFree)
+            .with_dietary_flag(DietaryFlag::Vegan);
+
+        let nutrition = NutritionalInfo {
+            calories: Some(dec!(30)),
+            protein_g: Some(dec!(1.0)),
+            net_carbs_g: Some(dec!(1.0)),
+            fat_g: Some(dec!(2.5)),
+            fiber_g: Some(dec!(0.5)),
+            sodium_mg: Some(dec!(170)),
+        };
+        item = item.with_nutrition(nutrition);
+
+        assert_eq!(item.dietary_flags.len(), 3);
+        assert!(item.dietary_flags.contains(&DietaryFlag::GlutenFree));
+        assert!(item.dietary_flags.contains(&DietaryFlag::DairyFree));
+        assert!(item.dietary_flags.contains(&DietaryFlag::Vegan));
+        assert_eq!(item.nutrition.as_ref().unwrap().calories, Some(dec!(30)));
+    }
 }

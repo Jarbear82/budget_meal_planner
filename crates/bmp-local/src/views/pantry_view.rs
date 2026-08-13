@@ -4,20 +4,314 @@ use bmp_services::AppServices;
 use chrono::{Local, NaiveDate};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
+use gpui_component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_component::tag::Tag;
 use gpui_component::WindowExt;
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, IndexPath, Selectable};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PantryGroupMode {
+    ExpirationStatus,
+    Category,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PantrySortMode {
+    ExpirationDate,
+    NameAsc,
+    QuantityDesc,
+}
+
+pub struct PantrySection {
+    pub title: String,
+    pub entries: Vec<PantryEntry>,
+}
+
+#[derive(IntoElement)]
+pub struct PantryListItem {
+    pub base: ListItem,
+    pub entry: PantryEntry,
+    pub item_name: String,
+    pub selected: bool,
+    pub view: Entity<PantryView>,
+}
+
+impl Selectable for PantryListItem {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
+    }
+}
+
+impl RenderOnce for PantryListItem {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let entry_id = self.entry.id;
+        let today = Local::now().date_naive();
+        let (exp_str, exp_status) = match self.entry.expiration {
+            Some(exp) => {
+                let days = (exp - today).num_days();
+                if days < 0 {
+                    (format!("Expired ({})", exp), "Expired")
+                } else if days <= 3 {
+                    (format!("Expires in {}d ({})", days, exp), "Expires Soon")
+                } else {
+                    (format!("Expires {}", exp), "Fresh")
+                }
+            }
+            None => ("No Expiration Date".to_string(), "Fresh"),
+        };
+
+        let view_dec = self.view.clone();
+        let view_inc = self.view.clone();
+        let view_del = self.view.clone();
+
+        self.base.py_2().px_2().rounded_md().child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .w_full()
+                .child(
+                    div()
+                        .w_1_4()
+                        .font_weight(FontWeight::BOLD)
+                        .text_sm()
+                        .text_color(cx.theme().foreground)
+                        .child(self.item_name),
+                )
+                .child(
+                    div()
+                        .w_1_4()
+                        .child(Tag::new().child(format!(
+                            "{} {}",
+                            self.entry.quantity.amount.normalize(),
+                            self.entry.quantity.unit
+                        ))),
+                )
+                .child(
+                    div()
+                        .w_1_4()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(Badge::new().child(exp_status))
+                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(exp_str)),
+                )
+                .child(
+                    div()
+                        .w_1_4()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            Button::new(format!("btn-dec-pantry-{}", entry_id))
+                                .secondary()
+                                .label("- 100")
+                                .on_click(move |_, _, cx| {
+                                    view_dec.update(cx, |this, cx| {
+                                        this.update_quantity(entry_id, dec!(-100), cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new(format!("btn-inc-pantry-{}", entry_id))
+                                .secondary()
+                                .label("+ 100")
+                                .on_click(move |_, _, cx| {
+                                    view_inc.update(cx, |this, cx| {
+                                        this.update_quantity(entry_id, dec!(100), cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new(format!("btn-del-pantry-{}", entry_id))
+                                .ghost()
+                                .label("🗑")
+                                .on_click(move |_, _, cx| {
+                                    view_del.update(cx, |this, cx| {
+                                        this.delete_entry(entry_id, cx);
+                                    });
+                                }),
+                        ),
+                ),
+        )
+    }
+}
+
+pub struct PantryListDelegate {
+    pub entries: Vec<PantryEntry>,
+    pub items: Vec<Item>,
+    pub sections: Vec<PantrySection>,
+    pub selected_index: Option<IndexPath>,
+    pub query: String,
+    pub group_mode: PantryGroupMode,
+    pub sort_mode: PantrySortMode,
+    pub view: Entity<PantryView>,
+}
+
+impl PantryListDelegate {
+    pub fn prepare(&mut self, query: String) {
+        self.query = query;
+        let q = self.query.to_lowercase();
+        let today = Local::now().date_naive();
+
+        let items_map: HashMap<ItemId, Item> = self.items.iter().map(|i| (i.id, i.clone())).collect();
+
+        let filtered: Vec<PantryEntry> = self
+            .entries
+            .iter()
+            .filter(|e| {
+                if q.is_empty() {
+                    true
+                } else {
+                    items_map
+                        .get(&e.item_id)
+                        .map(|item| item.name.to_lowercase().contains(&q))
+                        .unwrap_or(false)
+                }
+            })
+            .cloned()
+            .collect();
+
+        let mut groups: BTreeMap<String, Vec<PantryEntry>> = BTreeMap::new();
+        for entry in filtered {
+            let key = match self.group_mode {
+                PantryGroupMode::ExpirationStatus => match entry.expiration {
+                    Some(exp) => {
+                        let days = (exp - today).num_days();
+                        if days < 0 {
+                            "1. Expired".to_string()
+                        } else if days <= 3 {
+                            "2. Expires Soon (≤ 3 Days)".to_string()
+                        } else {
+                            "3. Fresh Inventory".to_string()
+                        }
+                    }
+                    None => "4. No Expiration Date".to_string(),
+                },
+                PantryGroupMode::Category => items_map
+                    .get(&entry.item_id)
+                    .and_then(|i| i.category.clone())
+                    .unwrap_or_else(|| "Uncategorized".to_string()),
+            };
+            groups.entry(key).or_default().push(entry);
+        }
+
+        self.sections = groups
+            .into_iter()
+            .map(|(title, mut entries)| {
+                match self.sort_mode {
+                    PantrySortMode::ExpirationDate => entries.sort_by(|a, b| {
+                        let ea = a.expiration.unwrap_or(NaiveDate::MAX);
+                        let eb = b.expiration.unwrap_or(NaiveDate::MAX);
+                        ea.cmp(&eb)
+                    }),
+                    PantrySortMode::NameAsc => entries.sort_by(|a, b| {
+                        let na = items_map.get(&a.item_id).map(|i| i.name.as_str()).unwrap_or("");
+                        let nb = items_map.get(&b.item_id).map(|i| i.name.as_str()).unwrap_or("");
+                        na.to_lowercase().cmp(&nb.to_lowercase())
+                    }),
+                    PantrySortMode::QuantityDesc => entries.sort_by(|a, b| b.quantity.amount.cmp(&a.quantity.amount)),
+                }
+                PantrySection { title, entries }
+            })
+            .collect();
+    }
+}
+
+impl ListDelegate for PantryListDelegate {
+    type Item = PantryListItem;
+
+    fn sections_count(&self, _: &App) -> usize {
+        self.sections.len()
+    }
+
+    fn items_count(&self, section: usize, _: &App) -> usize {
+        self.sections.get(section).map(|s| s.entries.len()).unwrap_or(0)
+    }
+
+    fn render_section_header(
+        &mut self,
+        section: usize,
+        _window: &mut Window,
+        cx: &mut Context<ListState<Self>>,
+    ) -> Option<impl IntoElement> {
+        let sec = self.sections.get(section)?;
+        Some(
+            div()
+                .px_3()
+                .py_1_5()
+                .bg(cx.theme().muted)
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(cx.theme().foreground)
+                        .child(sec.title.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{} entries", sec.entries.len())),
+                ),
+        )
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: Option<IndexPath>,
+        _: &mut Window,
+        _cx: &mut Context<ListState<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
+        let selected = Some(ix) == self.selected_index;
+        let entry = self.sections.get(ix.section)?.entries.get(ix.row)?;
+        let item_name = self
+            .items
+            .iter()
+            .find(|i| i.id == entry.item_id)
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| "Unknown Item".to_string());
+
+        Some(PantryListItem {
+            base: ListItem::new(format!("pantry-row-{}", entry.id)).selected(selected),
+            entry: entry.clone(),
+            item_name,
+            selected,
+            view: self.view.clone(),
+        })
+    }
+}
 
 pub struct PantryView {
     pub services: AppServices,
+    pub pantry_list: Entity<ListState<PantryListDelegate>>,
     pub status_msg: String,
 
     pub cached_entries: Vec<PantryEntry>,
@@ -29,12 +323,31 @@ pub struct PantryView {
     pub add_unit: Unit,
     pub add_expiration: Option<NaiveDate>,
     pub add_has_expiration: bool,
+
+    // Grouping & Sorting state
+    pub group_mode: PantryGroupMode,
+    pub sort_mode: PantrySortMode,
 }
 
 impl PantryView {
-    pub fn new(services: AppServices) -> Self {
-        let mut view = Self {
+    pub fn new(services: AppServices, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let view = cx.entity().clone();
+        let delegate = PantryListDelegate {
+            entries: Vec::new(),
+            items: Vec::new(),
+            sections: Vec::new(),
+            selected_index: None,
+            query: String::new(),
+            group_mode: PantryGroupMode::ExpirationStatus,
+            sort_mode: PantrySortMode::ExpirationDate,
+            view,
+        };
+
+        let pantry_list = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+
+        let mut view_state = Self {
             services,
+            pantry_list,
             status_msg: "Pantry inventory ready".to_string(),
 
             cached_entries: Vec::new(),
@@ -45,14 +358,37 @@ impl PantryView {
             add_unit: Unit::Gram,
             add_expiration: Some(Local::now().date_naive() + chrono::Duration::days(14)),
             add_has_expiration: true,
+
+            group_mode: PantryGroupMode::ExpirationStatus,
+            sort_mode: PantrySortMode::ExpirationDate,
         };
-        view.reload_data();
-        view
+        view_state.reload_data(cx);
+        view_state
     }
 
-    pub fn reload_data(&mut self) {
+    pub fn reload_data(&mut self, cx: &mut Context<Self>) {
         self.cached_entries = self.services.pantry.get_pantry().unwrap_or_default();
         self.cached_items = self.services.items.list_items().unwrap_or_default();
+
+        let pantry_list = self.pantry_list.clone();
+        let cached_entries = self.cached_entries.clone();
+        let cached_items = self.cached_items.clone();
+        let group_mode = self.group_mode;
+        let sort_mode = self.sort_mode;
+
+        cx.defer(move |cx| {
+            pantry_list.update(cx, |list, cx| {
+                list.delegate_mut().entries = cached_entries;
+                list.delegate_mut().items = cached_items;
+                list.delegate_mut().group_mode = group_mode;
+                list.delegate_mut().sort_mode = sort_mode;
+
+                let query = list.delegate().query.clone();
+                list.delegate_mut().prepare(query);
+                cx.notify();
+            });
+        });
+        cx.notify();
     }
 
     pub fn open_add_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -225,6 +561,7 @@ impl PantryView {
             Some(id) => id,
             None => {
                 self.status_msg = "Error: Select an item to add to pantry".to_string();
+                cx.notify();
                 return;
             }
         };
@@ -248,8 +585,7 @@ impl PantryView {
                 self.status_msg = format!("Error adding stock: {}", e);
             }
         }
-        self.reload_data();
-        cx.notify();
+        self.reload_data(cx);
     }
 
     pub fn update_quantity(&mut self, entry_id: PantryEntryId, delta: Decimal, cx: &mut Context<Self>) {
@@ -264,8 +600,7 @@ impl PantryView {
                 self.status_msg = format!("Updated stock quantity to {}", next_amount.normalize());
             }
         }
-        self.reload_data();
-        cx.notify();
+        self.reload_data(cx);
     }
 
     pub fn delete_entry(&mut self, entry_id: PantryEntryId, cx: &mut Context<Self>) {
@@ -277,16 +612,22 @@ impl PantryView {
                 self.status_msg = format!("Error deleting entry: {}", e);
             }
         }
-        self.reload_data();
-        cx.notify();
+        self.reload_data(cx);
     }
 }
 
 impl Render for PantryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entries = self.cached_entries.clone();
-        let items = self.cached_items.clone();
-        let today = Local::now().date_naive();
+        let group_options = vec![
+            SelectOption::new("ExpirationStatus", "Group by Expiration Status"),
+            SelectOption::new("Category", "Group by Item Category"),
+        ];
+
+        let sort_options = vec![
+            SelectOption::new("ExpirationDate", "Sort by Expiration Date"),
+            SelectOption::new("NameAsc", "Sort A-Z"),
+            SelectOption::new("QuantityDesc", "Sort by Quantity"),
+        ];
 
         div()
             .flex()
@@ -325,7 +666,10 @@ impl Render for PantryView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(Badge::new().child(format!("Pantry Entries: {}", entries.len())))
+                            .child(Badge::new().child(format!(
+                                "Pantry Entries: {}",
+                                self.cached_entries.len()
+                            )))
                             .child(
                                 Button::new("btn-add-pantry-stock")
                                     .primary()
@@ -336,17 +680,47 @@ impl Render for PantryView {
                             ),
                     ),
             )
-            // Status Bar
+            // Grouping & Sorting Control Bar
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
                     .p_3()
                     .bg(cx.theme().muted)
                     .rounded_lg()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("Status: {}", self.status_msg)),
+                    .child(
+                        div().w_56().child(
+                            Select::new("select-pantry-group-mode", group_options)
+                                .label("Section Grouping")
+                                .selected_id(Some(format!("{:?}", self.group_mode)))
+                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
+                                    this.group_mode = match opt.id.as_str() {
+                                        "Category" => PantryGroupMode::Category,
+                                        _ => PantryGroupMode::ExpirationStatus,
+                                    };
+                                    this.reload_data(cx);
+                                })),
+                        ),
+                    )
+                    .child(
+                        div().w_48().child(
+                            Select::new("select-pantry-sort-mode", sort_options)
+                                .label("Sorting")
+                                .selected_id(Some(format!("{:?}", self.sort_mode)))
+                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
+                                    this.sort_mode = match opt.id.as_str() {
+                                        "NameAsc" => PantrySortMode::NameAsc,
+                                        "QuantityDesc" => PantrySortMode::QuantityDesc,
+                                        _ => PantrySortMode::ExpirationDate,
+                                    };
+                                    this.reload_data(cx);
+                                })),
+                        ),
+                    )
+                    .child(Alert::new("pantry-status-alert", format!("Status: {}", self.status_msg))),
             )
-            // Inventory Table
+            // Inventory Table List with Sticky Section Headers
             .child(
                 div()
                     .flex()
@@ -358,98 +732,25 @@ impl Render for PantryView {
                     .border_color(cx.theme().border)
                     .rounded_lg()
                     .flex_1()
-                    .overflow_y_scrollbar()
                     .child(
-                        Table::new()
-                            .child(
-                                TableHeader::new()
-                                    .child(TableHead::new().child("Item Name"))
-                                    .child(TableHead::new().child("Available Stock Quantity"))
-                                    .child(TableHead::new().child("Expiration Status"))
-                                    .child(TableHead::new().child("Quick Adjust & Delete")),
-                            )
-                            .child(
-                                TableBody::new().children(entries.into_iter().map(|entry| {
-                                    let entry_id = entry.id;
-                                    let item_name = items
-                                        .iter()
-                                        .find(|i| i.id == entry.item_id)
-                                        .map(|i| i.name.clone())
-                                        .unwrap_or_else(|| "Unknown Item".to_string());
-
-                                    let (exp_str, exp_status) = match entry.expiration {
-                                        Some(exp) => {
-                                            let days = (exp - today).num_days();
-                                            if days < 0 {
-                                                (format!("Expired ({})", exp), "Expired")
-                                            } else if days <= 3 {
-                                                (format!("Expires in {}d ({})", days, exp), "Expires Soon")
-                                            } else {
-                                                (format!("Expires {}", exp), "Fresh")
-                                            }
-                                        }
-                                        None => ("No Expiration Date".to_string(), "Fresh"),
-                                    };
-
-                                    TableRow::new()
-                                        .child(
-                                            TableCell::new().child(
-                                                div()
-                                                    .font_weight(FontWeight::BOLD)
-                                                    .text_sm()
-                                                    .text_color(cx.theme().foreground)
-                                                    .child(item_name),
-                                            ),
-                                        )
-                                        .child(
-                                            TableCell::new().child(
-                                                Tag::new().child(format!("{} {}", entry.quantity.amount.normalize(), entry.quantity.unit)),
-                                            ),
-                                        )
-                                        .child(
-                                            TableCell::new().child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .child(Badge::new().child(exp_status))
-                                                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(exp_str)),
-                                            ),
-                                        )
-                                        .child(
-                                            TableCell::new().child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(
-                                                        Button::new(format!("btn-dec-pantry-{}", entry_id))
-                                                            .secondary()
-                                                            .label("- 100")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.update_quantity(entry_id, dec!(-100), cx);
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        Button::new(format!("btn-inc-pantry-{}", entry_id))
-                                                            .secondary()
-                                                            .label("+ 100")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.update_quantity(entry_id, dec!(100), cx);
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        Button::new(format!("btn-del-pantry-{}", entry_id))
-                                                            .ghost()
-                                                            .label("🗑")
-                                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                                this.delete_entry(entry_id, cx);
-                                                            })),
-                                                    ),
-                                            ),
-                                        )
-                                })),
-                            ),
+                        div()
+                            .flex()
+                            .justify_between()
+                            .pb_2()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .text_xs()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(cx.theme().muted_foreground)
+                            .child(div().w_1_4().child("Item Name"))
+                            .child(div().w_1_4().child("Stock Quantity"))
+                            .child(div().w_1_4().child("Expiration Status"))
+                            .child(div().w_1_4().child("Actions")),
+                    )
+                    .child(
+                        List::new(&self.pantry_list)
+                            .flex_1()
+                            .w_full(),
                     ),
             )
     }

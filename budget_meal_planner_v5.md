@@ -119,6 +119,15 @@ Prototype → test → refine. Domain logic is written and unit-tested first. In
 6. The desktop UI (`bmp-local`) shall render dialog overlays programmatically using native window management (`window.open_dialog`) and explicit root view layer composition (`Root::render_dialog_layer`), bypassing inline view tree modal wrappers.
 7. The desktop UI views shall maintain cached struct fields for domain entities and render strictly from memory in `Render::render()`, reloading state asynchronously or via mutation listeners (`reload_data()`). No database disk queries or recursive cost calculations shall execute inside `render()`.
 
+## 2.5 Categorization, Groupings, Filtering, Sorting & Nutrition
+1. The system shall support optional Nutritional Info (calories, protein, net carbs, fat, fiber, sodium per 100g/ml) and Dietary Flags (Gluten-Free, Dairy-Free, Keto-Friendly, Carnivore, Vegetarian, Vegan, Nut-Free, Low-FODMAP) on Items and computed on Recipes.
+2. The desktop UI shall provide virtualized, sticky section headers (`ListDelegate::render_section_header`) across all major List views. Users may dynamically switch the active grouping axis.
+3. The system shall strictly distinguish between Categories (domain attributes), Groupings (sticky section headers), Filters (inclusion/exclusion criteria), and Sorting (intra-section ordering).
+4. `ItemsView` shall support section groupings by Category, Purchase Mode, Density Status, or Store Coverage; filtering by Search Query, Dietary Flags, and Macro Target Ranges; and sorting by Name, Density, and Macros.
+5. `RecipesView` shall support section groupings by Meal Type, Derived Dietary Tags, Cost Tier, or Nesting Structure; filtering by Search Query, Meal Type, Dietary Restrictions, and Form-Based Macro Target Ranges (Max Calories, Min Protein, Max Net Carbs, Max Cost); and sorting by Name, Cost, and Macros.
+6. `PantryView` shall support section groupings by Expiration Status, Item Category, Dietary Tag, or Stock Warning Level; filtering by Search, Expiration, and Category; and sorting by Expiration Date, Name, and Quantity.
+7. `ShoppingView` shall support section groupings by Target Store, Aisle/Category, or Purchased Status; filtering by Store and Checked status; and sorting by Line Total and Name.
+
 ---
 
 # 3.0 Stretch Requirements
@@ -200,12 +209,26 @@ Density  // Always stored normalized as g/ml.
 
 PurchaseMode  // BuyFinished | PreferMake | AskEveryTime
 
+NutritionalInfo {
+    calories: Option<Decimal>,
+    protein_g: Option<Decimal>,
+    net_carbs_g: Option<Decimal>,
+    fat_g: Option<Decimal>,
+    fiber_g: Option<Decimal>,
+    sodium_mg: Option<Decimal>,
+}
+
+DietaryFlag  // GlutenFree, DairyFree, KetoFriendly, Carnivore,
+             // Vegetarian, Vegan, NutFree, LowFodmap
+
 Item {
     id: ItemId,
     name: String,
     density: Option<Density>,          // None → many calculations disabled
     preferred_purchase_mode: PurchaseMode,
     category: Option<String>,
+    nutrition: Option<NutritionalInfo>,
+    dietary_flags: Vec<DietaryFlag>,
     // optional mass-per-each bridge for count units
 }
 
@@ -478,6 +501,15 @@ All requirements in Section 2.0 have corresponding automated tests. Domain tests
 | Domain functions called | Inspect dependencies | Domain crate has no I/O; only services talk to storage |
 | User triggers modal dialog | Clicks action button | Modal opens via native `window.open_dialog` and renders on `Root::render_dialog_layer` |
 | View `render()` passes fire | Inspect execution trace | View renders purely from struct-level cached memory state; 0 disk DB queries inside `render()` |
+
+**Categorization, Groupings, Filtering, Sorting & Nutrition**
+| Setup | Action | Success |
+|-------|--------|---------|
+| Item created with nutrition & dietary flags | Saves Item | Macro values and flags persisted; available for filtering |
+| Recipe contains ingredients with nutrition | Inspects recipe | Recipe macro totals per serving / batch computed on-the-fly |
+| User sets sticky section grouping mode | Changes grouping dropdown | List re-renders with sticky section headers (`render_section_header`) |
+| User inputs macro target ranges on form | Applies macro filter (e.g. Protein ≥ 20g) | List filtered down to items/recipes matching macro thresholds |
+| User applies dietary restriction filters | Toggles "Gluten-Free" + "Keto" | Only items/recipes satisfying all selected flags displayed |
 
 ### 6.2.2 Stretch Tests
 Tests for Section 3.0 features are required only when those features are implemented.

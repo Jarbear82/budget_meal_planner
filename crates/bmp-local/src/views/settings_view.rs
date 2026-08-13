@@ -3,6 +3,7 @@ use gpui::prelude::*;
 use gpui::*;
 use gpui_component::alert::Alert;
 use gpui_component::avatar::Avatar;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::kbd::Kbd;
 use gpui_component::pagination::Pagination;
 use gpui_component::progress::Progress;
@@ -35,6 +36,25 @@ impl SettingsView {
             auto_deduct_pantry: true,
             preferred_package_lock: true,
         }
+    }
+
+    pub fn seed_data(&mut self, cx: &mut Context<Self>) {
+        match bmp_common_ingredients::seed_common_data_if_not_exists(&self.services.storage) {
+            Ok((items_added, recipes_added)) => {
+                if items_added == 0 && recipes_added == 0 {
+                    self.status_msg = "Database already contains sample ingredients and recipes.".to_string();
+                } else {
+                    self.status_msg = format!(
+                        "Successfully seeded {} new ingredients and {} new recipes!",
+                        items_added, recipes_added
+                    );
+                }
+            }
+            Err(e) => {
+                self.status_msg = format!("Seeding Error: {}", e);
+            }
+        }
+        cx.notify();
     }
 }
 
@@ -72,13 +92,13 @@ impl Render for SettingsView {
                                             .text_2xl()
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(cx.theme().foreground)
-                                            .child("Preferences & Extended Components"),
+                                            .child("Preferences & Extended Controls"),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(cx.theme().muted_foreground)
-                                            .child("Configure local profile, ratings, theme accents, and keyboard shortcuts"),
+                                            .child("Configure local profile, sample data seeding, ratings, and keyboard shortcuts"),
                                     ),
                             ),
                     ),
@@ -142,7 +162,29 @@ impl Render for SettingsView {
                                     ),
                             ),
                     )
-                    // Card 2: Progress & Pagination Controls
+                    // Card 2: Sample Data Seeding & Database Controls
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_4()
+                            .p_5()
+                            .bg(cx.theme().background)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .rounded_xl()
+                            .child(div().text_sm().font_weight(FontWeight::BOLD).child("Sample Data Seeding"))
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Populate missing common ingredients and starter recipes into your database."))
+                            .child(
+                                Button::new("btn-seed-common-data")
+                                    .primary()
+                                    .label("🌱 Seed Sample Ingredients & Recipes")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.seed_data(cx);
+                                    })),
+                            ),
+                    )
+                    // Card 3: Progress & Pagination Controls
                     .child(
                         div()
                             .flex()
@@ -180,7 +222,7 @@ impl Render for SettingsView {
                                     ),
                             ),
                     )
-                    // Card 3: Keyboard Shortcuts (Kbd) & Settings Group
+                    // Card 4: Keyboard Shortcuts (Kbd) & Settings Group
                     .child(
                         div()
                             .flex()
@@ -209,7 +251,7 @@ impl Render for SettingsView {
                                     .child(Kbd::new(keystroke_ctrl_f)),
                             ),
                     )
-                    // Card 4: Interactive Switch Toggles & Privacy
+                    // Card 5: Interactive Switch Toggles & Privacy
                     .child(
                         div()
                             .flex()

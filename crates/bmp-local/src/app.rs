@@ -1,12 +1,13 @@
 use crate::components::TitleBar;
 use crate::views::*;
-use bmp_common_ingredients::seed_common_ingredients;
 use bmp_services::AppServices;
 use bmp_storage::Storage;
 use gpui::*;
-use gpui_component::status_bar::StatusBar;
-use gpui_component::tab::{Tab, TabBar};
-use gpui_component::ActiveTheme;
+use gpui_component::{
+    ActiveTheme, Root,
+    status_bar::StatusBar,
+    tab::{Tab, TabBar},
+};
 
 pub struct BudgetMealPlannerApp {
     pub _services: AppServices,
@@ -25,7 +26,7 @@ pub struct BudgetMealPlannerApp {
 }
 
 impl BudgetMealPlannerApp {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (storage, db_path_str) = match Storage::open_default() {
             Ok(s) => {
                 let path_display = Storage::default_db_path()
@@ -40,13 +41,18 @@ impl BudgetMealPlannerApp {
         };
 
         let services = AppServices::new(storage.clone());
-        let _ = seed_common_ingredients(&storage);
 
-        let items_view = cx.new(|_| ItemsView::new(services.clone()));
-        let recipes_view = cx.new(|_| RecipesView::new(services.clone()));
+        let existing_items = storage.get_all_items().unwrap_or_default();
+        let existing_recipes = storage.get_all_recipes().unwrap_or_default();
+        if existing_items.is_empty() && existing_recipes.is_empty() {
+            let _ = bmp_common_ingredients::seed_common_data_if_not_exists(&storage);
+        }
+
+        let items_view = cx.new(|cx| ItemsView::new(services.clone(), window, cx));
+        let recipes_view = cx.new(|cx| RecipesView::new(services.clone(), window, cx));
         let schedule_view = cx.new(|_| ScheduleView::new(services.clone()));
-        let shopping_view = cx.new(|_| ShoppingView::new(services.clone()));
-        let pantry_view = cx.new(|_| PantryView::new(services.clone()));
+        let shopping_view = cx.new(|cx| ShoppingView::new(services.clone(), window, cx));
+        let pantry_view = cx.new(|cx| PantryView::new(services.clone(), window, cx));
         let analytics_view = cx.new(|_| AnalyticsView::new(services.clone()));
         let settings_view = cx.new(|cx| SettingsView::new(cx, services.clone()));
         let showcase_view = cx.new(|_| ComponentShowcaseView::new());
@@ -71,10 +77,7 @@ impl BudgetMealPlannerApp {
         self.active_tab = tab_idx;
         cx.notify();
     }
-
 }
-
-use gpui_component::Root;
 
 impl Render for BudgetMealPlannerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -103,7 +106,7 @@ impl Render for BudgetMealPlannerApp {
             .text_color(cx.theme().foreground)
             // Custom Title Bar
             .child(TitleBar::new("Budget Meal Planner v5", "Database Ready"))
-            // Navigation TabBar using gpui_component::tab::TabBar & Tab
+            // Navigation TabBar
             .child(
                 div()
                     .px_4()
@@ -127,19 +130,16 @@ impl Render for BudgetMealPlannerApp {
                     ),
             )
             // Active Tab Content View
-            .child(
-                div().flex_1().child(match active_tab {
-                    0 => self.items_view.clone().into_any_element(),
-                    1 => self.recipes_view.clone().into_any_element(),
-                    2 => self.schedule_view.clone().into_any_element(),
-                    3 => self.shopping_view.clone().into_any_element(),
-                    4 => self.pantry_view.clone().into_any_element(),
-                    5 => self.analytics_view.clone().into_any_element(),
-                    6 => self.settings_view.clone().into_any_element(),
-                    _ => self.showcase_view.clone().into_any_element(),
-                }),
-            )
-            // Native gpui_component::status_bar::StatusBar
+            .child(div().flex_1().child(match active_tab {
+                0 => self.items_view.clone().into_any_element(),
+                1 => self.recipes_view.clone().into_any_element(),
+                2 => self.schedule_view.clone().into_any_element(),
+                3 => self.shopping_view.clone().into_any_element(),
+                4 => self.pantry_view.clone().into_any_element(),
+                5 => self.analytics_view.clone().into_any_element(),
+                6 => self.settings_view.clone().into_any_element(),
+                _ => self.showcase_view.clone().into_any_element(),
+            }))
             .child(
                 StatusBar::new()
                     .left(format!("● SQLite Storage: {}", self.db_path_str))

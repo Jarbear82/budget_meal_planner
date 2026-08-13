@@ -1,7 +1,58 @@
 use crate::bridge::UnitBridge;
 use crate::density::Density;
 use crate::id::ItemId;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DietaryFlag {
+    GlutenFree,
+    DairyFree,
+    KetoFriendly,
+    Carnivore,
+    Vegetarian,
+    Vegan,
+    NutFree,
+    LowFodmap,
+}
+
+impl DietaryFlag {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DietaryFlag::GlutenFree => "Gluten-Free",
+            DietaryFlag::DairyFree => "Dairy-Free",
+            DietaryFlag::KetoFriendly => "Keto-Friendly",
+            DietaryFlag::Carnivore => "Carnivore",
+            DietaryFlag::Vegetarian => "Vegetarian",
+            DietaryFlag::Vegan => "Vegan",
+            DietaryFlag::NutFree => "Nut-Free",
+            DietaryFlag::LowFodmap => "Low-FODMAP",
+        }
+    }
+
+    pub fn all() -> &'static [DietaryFlag] {
+        &[
+            DietaryFlag::GlutenFree,
+            DietaryFlag::DairyFree,
+            DietaryFlag::KetoFriendly,
+            DietaryFlag::Carnivore,
+            DietaryFlag::Vegetarian,
+            DietaryFlag::Vegan,
+            DietaryFlag::NutFree,
+            DietaryFlag::LowFodmap,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NutritionalInfo {
+    pub calories: Option<Decimal>,
+    pub protein_g: Option<Decimal>,
+    pub net_carbs_g: Option<Decimal>,
+    pub fat_g: Option<Decimal>,
+    pub fiber_g: Option<Decimal>,
+    pub sodium_mg: Option<Decimal>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PurchaseMode {
@@ -24,6 +75,8 @@ pub struct Item {
     pub preferred_purchase_mode: PurchaseMode,
     pub category: Option<String>,
     pub count_bridge: Option<UnitBridge>,
+    pub nutrition: Option<NutritionalInfo>,
+    pub dietary_flags: Vec<DietaryFlag>,
 }
 
 impl Item {
@@ -35,6 +88,8 @@ impl Item {
             preferred_purchase_mode: PurchaseMode::BuyFinished,
             category: None,
             count_bridge: None,
+            nutrition: None,
+            dietary_flags: Vec::new(),
         }
     }
 
@@ -55,6 +110,18 @@ impl Item {
 
     pub fn with_count_bridge(mut self, bridge: UnitBridge) -> Self {
         self.count_bridge = Some(bridge);
+        self
+    }
+
+    pub fn with_nutrition(mut self, nutrition: NutritionalInfo) -> Self {
+        self.nutrition = Some(nutrition);
+        self
+    }
+
+    pub fn with_dietary_flag(mut self, flag: DietaryFlag) -> Self {
+        if !self.dietary_flags.contains(&flag) {
+            self.dietary_flags.push(flag);
+        }
         self
     }
 
