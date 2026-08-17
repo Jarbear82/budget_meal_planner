@@ -16,7 +16,7 @@ To provide meal planning, tracking, and cost analysis tools for budget-conscious
 ## 1.2 Scope
 This project is a **local-first, client-only** application. It does not require user accounts. Initial scope does not provide cloud sync or online features.
 
-The project is organized as a Cargo workspace with multiple crates. The **primary deliverable** is the local desktop application (`bmp-local`) with at least one interactive UI (GPUI preferred). Secondary crates (CLI, TUI, mobile shell, optional server) are supported but not required for completeness.
+The project is organized as a Cargo workspace with multiple crates. The **primary deliverable** is the local desktop application (`bmp-gpui`) with at least one interactive UI (GPUI preferred). Secondary crates (CLI, TUI, mobile shell, optional server) are supported but not required for completeness.
 
 To be considered complete, the project must fully implement the meal planning, shopping, inventory, and cost analysis tools listed in Section 2.0, using the unified domain model defined in Section 5. Time permitting, stretch features from Section 3.0 may be added.
 
@@ -38,7 +38,7 @@ To be considered complete, the project must fully implement the meal planning, s
 ### 1.3.2 Front-end / Adapter Crates
 | Crate                   | Purpose                              | UI / Interface Technology      | Priority      |
 |-------------------------|--------------------------------------|--------------------------------|---------------|
-| `bmp-local`             | Primary desktop application          | GPUI (preferred)               | **Mandatory** |
+| `bmp-gpui`              | Primary desktop application          | GPUI (preferred)               | **Mandatory** |
 | `bmp-cli`               | Command-line interface               | clap                           | Secondary     |
 | `bmp-tui`               | Terminal user interface              | ratatui + crossterm            | Secondary     |
 | `bmp-common-ingredients`| Optional curated common items        | Static data                    | Optional      |
@@ -113,10 +113,10 @@ Prototype → test → refine. Domain logic is written and unit-tested first. In
 ## 2.4 System Architecture & Notifications
 1. The system shall persist all user data locally using an SQLite database.
 2. The system shall trigger a notification (default 30 minutes after scheduled meal time) prompting the user to verify whether the meal was consumed. The notification is fire-and-forget; later confirmation is handled correctly.
-3. The primary product (`bmp-local`) shall run fully offline and require no network access or user accounts.
+3. The primary product (`bmp-gpui`) shall run fully offline and require no network access or user accounts.
 4. All core domain logic shall reside in a pure, I/O-free crate (`bmp-domain`).
 5. Front-end and services communicate via straightforward, low-overhead event-driven message passing (commands / queries → view-models / events).
-6. The desktop UI (`bmp-local`) shall render dialog overlays programmatically using native window management (`window.open_dialog`) and explicit root view layer composition (`Root::render_dialog_layer`), bypassing inline view tree modal wrappers.
+6. The desktop UI (`bmp-gpui`) shall render dialog overlays programmatically using native window management (`window.open_dialog`) and explicit root view layer composition (`Root::render_dialog_layer`), bypassing inline view tree modal wrappers.
 7. The desktop UI views shall maintain cached struct fields for domain entities and render strictly from memory in `Render::render()`, reloading state asynchronously or via mutation listeners (`reload_data()`). No database disk queries or recursive cost calculations shall execute inside `render()`.
 
 ## 2.5 Categorization, Groupings, Filtering, Sorting & Nutrition
@@ -173,7 +173,7 @@ budget-meal-planner/                  # Cargo workspace
 │   ├── bmp-domain/                   # Pure domain model & logic (single source of truth)
 │   ├── bmp-storage/                  # SQLite repositories & migrations
 │   ├── bmp-services/                 # Application / use-case layer
-│   ├── bmp-local/                    # ★ Primary desktop application (GPUI preferred)
+│   ├── bmp-gpui/                     # ★ Primary desktop application (GPUI preferred)
 │   ├── bmp-common-ingredients/       # Optional static curated Items (can be disabled)
 │   ├── bmp-cli/                      # CLI (secondary)
 │   ├── bmp-tui/                      # Terminal UI (secondary)
@@ -362,7 +362,7 @@ Notifications are fire-and-forget; later confirmation is handled as a normal com
 
 ## 5.5 Resources
 - **Hardware:** Linux/macOS/Windows for development; desktop primary, Android secondary.
-- **Software:** Pure Rust domain, SQLite storage, services layer, GPUI (preferred) for `bmp-local`.
+- **Software:** Pure Rust domain, SQLite storage, services layer, GPUI (preferred) for `bmp-gpui`.
 - **Optional:** `bmp-common-ingredients` ships a static curated set; users may disable it and supply their own.
 
 ---
@@ -370,7 +370,7 @@ Notifications are fire-and-forget; later confirmation is handled as a normal com
 # 6.0 Verification
 
 ## 6.1 Demo
-The demo shall exercise the core workflows (Add Item → Recipe → Nesting → PrePlannedMeal → Schedule → Make Recipe → Shopping → Pantry consumption → Analytics) using pre-populated data. Primary demo target is `bmp-local`.
+The demo shall exercise the core workflows (Add Item → Recipe → Nesting → PrePlannedMeal → Schedule → Make Recipe → Shopping → Pantry consumption → Analytics) using pre-populated data. Primary demo target is `bmp-gpui`.
 
 ## 6.2 Testing
 
@@ -533,6 +533,6 @@ Tests for Section 3.0 features are required only when those features are impleme
 ---
 
 **Document Status:** SRS v5 – Rust Multi-Crate Edition with Unified Density-Centric Domain Model  
-**Primary Product:** `bmp-local` (local-first desktop application, GPUI preferred)  
+**Primary Product:** `bmp-gpui` (local-first desktop application, GPUI preferred)  
 **Core Principle:** Pure domain as single source of truth + explicit services + thin front-ends. Local-first remains non-negotiable; server, mobile, and cloud/P2P are secondary/future.  
 **Key Change from v4:** Fully specified density model (g/ml normalized, on-the-fly bridges), Item/Recipe ownership and yield rules, substitute system, cycle-flag semantics, Make Recipe pre-configuration flow, per-store shopping, native window dialog management (`window.open_dialog`), state-driven cached in-memory UI rendering, and explicit tests covering every core workflow and the major edge cases.

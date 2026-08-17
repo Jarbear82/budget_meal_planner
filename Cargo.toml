@@ -4,7 +4,7 @@ members = [
     "crates/bmp-domain",
     "crates/bmp-storage",
     "crates/bmp-services",
-    "crates/bmp-local",
+    "crates/bmp-gpui",
     "crates/bmp-common-ingredients",
     "crates/bmp-cli",
     "crates/bmp-tui",
