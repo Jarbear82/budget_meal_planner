@@ -1,42 +1,31 @@
 use crate::components::*;
-use chrono::{Local, NaiveDate};
+use chrono::Local;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::ActiveTheme;
+use gpui_component::WindowExt;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
-use gpui_component::WindowExt;
-use gpui_component::ActiveTheme;
 use rust_decimal_macros::dec;
 
 pub struct ComponentShowcaseView {
-    pub text_value: String,
+    pub demo_input: Entity<InputState>,
+    pub demo_select: Entity<SelectState<Vec<SelectOption>>>,
+    pub demo_date_picker: Entity<DatePickerState>,
     pub number_value: rust_decimal::Decimal,
-    pub selected_option_id: Option<String>,
-    pub select_is_open: bool,
     pub checkbox_checked: bool,
-    pub selected_date: NaiveDate,
-    pub datepicker_is_open: bool,
     pub status_msg: String,
 }
 
 impl ComponentShowcaseView {
-    pub fn new() -> Self {
-        Self {
-            text_value: "Sample Ingredient Name".to_string(),
-            number_value: dec!(1.25),
-            selected_option_id: Some("grams".to_string()),
-            select_is_open: false,
-            checkbox_checked: true,
-            selected_date: Local::now().date_naive(),
-            datepicker_is_open: false,
-            status_msg: "Phase 1 UI Primitives Ready".to_string(),
-        }
-    }
-}
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let demo_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. Olive Oil")
+                .default_value("Sample Ingredient Name")
+        });
 
-impl Render for ComponentShowcaseView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let options = vec![
             SelectOption::new("grams", "Grams (g)").with_description("Mass unit"),
             SelectOption::new("ml", "Milliliters (ml)").with_description("Volume unit"),
@@ -44,13 +33,54 @@ impl Render for ComponentShowcaseView {
             SelectOption::new("lbs", "Pounds (lbs)").with_description("Imperial mass unit"),
         ];
 
-        let text_val = self.text_value.clone();
+        let demo_select = cx.new(|cx| {
+            SelectState::new(options, Some(IndexPath::default().row(0)), window, cx)
+        });
+
+        let demo_date_picker = cx.new(|cx| {
+            let mut picker = DatePickerState::new(window, cx);
+            picker.set_date(Local::now().date_naive(), window, cx);
+            picker
+        });
+
+        cx.subscribe_in(
+            &demo_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.status_msg = format!("Selected unit option: {}", id);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &demo_date_picker,
+            window,
+            |this, _, ev: &DatePickerEvent, _window, cx| {
+                if let DatePickerEvent::Change(Date::Single(Some(date))) = ev {
+                    this.status_msg = format!("Selected date: {}", date);
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        Self {
+            demo_input,
+            demo_select,
+            demo_date_picker,
+            number_value: dec!(1.25),
+            checkbox_checked: true,
+            status_msg: "UI Primitives Ready".to_string(),
+        }
+    }
+}
+
+impl Render for ComponentShowcaseView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let number_val = self.number_value;
-        let selected_opt_id = self.selected_option_id.clone();
-        let select_open = self.select_is_open;
-        let _cb_checked = self.checkbox_checked;
-        let sel_date = self.selected_date;
-        let date_open = self.datepicker_is_open;
 
         div()
             .flex()
@@ -104,14 +134,13 @@ impl Render for ComponentShowcaseView {
                                 div()
                                     .text_base()
                                     .font_weight(FontWeight::BOLD)
-                                    .child("1. FormInput & NumberInput"),
+                                    .child("1. Interactive Text Input & Number Controls"),
                             )
                             .child(
-                                FormInput::new("showcase-input-1")
-                                    .label("Ingredient Name")
-                                    .placeholder("e.g. Olive Oil")
-                                    .value(text_val)
-                                    .helper_text("Enter the primary domain item identifier"),
+                                form_field(
+                                    "Ingredient Name",
+                                    Input::new(&self.demo_input),
+                                ),
                             )
                             .child(
                                 NumberInput::new("showcase-number-1", number_val)
@@ -149,20 +178,10 @@ impl Render for ComponentShowcaseView {
                                     .child("2. Select / Combobox Picker"),
                             )
                             .child(
-                                Select::new("showcase-select-1", options)
-                                    .label("Measurement Unit")
-                                    .selected_id(selected_opt_id)
-                                    .is_open(select_open)
-                                    .on_toggle(cx.listener(|this, open, _window, cx| {
-                                        this.select_is_open = *open;
-                                        cx.notify();
-                                    }))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        this.selected_option_id = Some(opt.id.clone());
-                                        this.select_is_open = false;
-                                        this.status_msg = format!("Selected unit option: {}", opt.label);
-                                        cx.notify();
-                                    })),
+                                select_field(
+                                    "Measurement Unit",
+                                    Select::new(&self.demo_select),
+                                ),
                             ),
                     )
                     // Card 3: Checkbox & Toggles
@@ -217,32 +236,30 @@ impl Render for ComponentShowcaseView {
                                     .child("4. DatePicker & Dialog Modal"),
                             )
                             .child(
-                                DatePicker::new("showcase-dp-1", sel_date)
-                                    .label("Scheduled Meal Date")
-                                    .is_open(date_open)
-                                    .on_toggle(cx.listener(|this, open, _window, cx| {
-                                        this.datepicker_is_open = *open;
-                                        cx.notify();
-                                    }))
-                                    .on_change(cx.listener(|this, date, _window, cx| {
-                                        this.selected_date = *date;
-                                        this.datepicker_is_open = false;
-                                        this.status_msg = format!("Selected date: {}", date);
-                                        cx.notify();
-                                    })),
+                                date_picker_field(
+                                    "Scheduled Meal Date",
+                                    DatePicker::new(&self.demo_date_picker),
+                                ),
                             )
                             .child(
                                 Button::new("btn-open-dialog-demo")
                                     .primary()
                                     .label("Open Interactive Modal Dialog")
                                     .on_click(cx.listener(|_this, _event, window, cx| {
+                                        let batch_input = cx.new(|cx| {
+                                            InputState::new(window, cx)
+                                                .placeholder("2.0")
+                                                .default_value("2.0")
+                                        });
                                         let view = cx.entity().clone();
                                         window.open_dialog(cx, move |dialog, _, _| {
                                             let view_confirm = view.clone();
+                                            let b_in = batch_input.clone();
                                             dialog
                                                 .w(px(500.))
-                                                .content(move |content, _, _| {
+                                                .content(move |content, _, _cx| {
                                                     let v_confirm = view_confirm.clone();
+                                                    let b_save = b_in.clone();
                                                     content
                                                         .child(
                                                             DialogHeader::new()
@@ -256,9 +273,10 @@ impl Render for ComponentShowcaseView {
                                                                 .flex_col()
                                                                 .gap_3()
                                                                 .child(
-                                                                    FormInput::new("modal-input-batches")
-                                                                        .label("Number of Batches")
-                                                                        .value("2.0"),
+                                                                    form_field(
+                                                                        "Number of Batches",
+                                                                        Input::new(&b_in),
+                                                                    ),
                                                                 )
                                                                 .child(
                                                                     Checkbox::new("modal-cb-include-optionals")
@@ -281,8 +299,9 @@ impl Render for ComponentShowcaseView {
                                                                         .primary()
                                                                         .label("Produce Batches into Pantry")
                                                                         .on_click(move |_, window, cx| {
+                                                                            let batches = b_save.read(cx).value().to_string();
                                                                             v_confirm.update(cx, |this, cx| {
-                                                                                this.status_msg = "Successfully executed Make Recipe production!".to_string();
+                                                                                this.status_msg = format!("Successfully executed Make Recipe production for {} batches!", batches);
                                                                                 cx.notify();
                                                                             });
                                                                             window.close_dialog(cx);

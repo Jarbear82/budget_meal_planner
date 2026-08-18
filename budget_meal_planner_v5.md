@@ -173,7 +173,7 @@ budget-meal-planner/                  # Cargo workspace
 │   ├── bmp-domain/                   # Pure domain model & logic (single source of truth)
 │   ├── bmp-storage/                  # SQLite repositories & migrations
 │   ├── bmp-services/                 # Application / use-case layer
-│   ├── bmp-gpui/                     # ★ Primary desktop application (GPUI preferred)
+│   ├── bmp-gpui/                     # Primary desktop application (GPUI)
 │   ├── bmp-common-ingredients/       # Optional static curated Items (can be disabled)
 │   ├── bmp-cli/                      # CLI (secondary)
 │   ├── bmp-tui/                      # Terminal UI (secondary)

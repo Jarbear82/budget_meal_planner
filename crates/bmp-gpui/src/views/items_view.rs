@@ -363,6 +363,8 @@ pub struct ItemsView {
     pub group_mode: ItemGroupMode,
     pub sort_mode: ItemSortMode,
     pub dietary_filter: Option<DietaryFlag>,
+    pub group_mode_select: Entity<SelectState<Vec<SelectOption>>>,
+    pub sort_mode_select: Entity<SelectState<Vec<SelectOption>>>,
 }
 
 impl ItemsView {
@@ -380,6 +382,55 @@ impl ItemsView {
         };
 
         let items_list = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+
+        let group_options = vec![
+            SelectOption::new("Category", "Group: Category"),
+            SelectOption::new("PurchaseMode", "Group: Purchase Mode"),
+            SelectOption::new("DensityStatus", "Group: Density Status"),
+        ];
+        let sort_options = vec![
+            SelectOption::new("NameAsc", "Sort: Name (A-Z)"),
+            SelectOption::new("NameDesc", "Sort: Name (Z-A)"),
+            SelectOption::new("DensityDesc", "Sort: Highest Density"),
+        ];
+        let group_mode_select = cx.new(|cx| {
+            SelectState::new(group_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+        let sort_mode_select = cx.new(|cx| {
+            SelectState::new(sort_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+
+        cx.subscribe_in(
+            &group_mode_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.group_mode = match id.as_str() {
+                        "PurchaseMode" => ItemGroupMode::PurchaseMode,
+                        "DensityStatus" => ItemGroupMode::DensityStatus,
+                        _ => ItemGroupMode::Category,
+                    };
+                    this.reload_data(cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &sort_mode_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.sort_mode = match id.as_str() {
+                        "NameDesc" => ItemSortMode::NameDesc,
+                        "DensityDesc" => ItemSortMode::DensityDesc,
+                        _ => ItemSortMode::NameAsc,
+                    };
+                    this.reload_data(cx);
+                }
+            },
+        )
+        .detach();
 
         let mut view_state = Self {
             services,
@@ -421,6 +472,8 @@ impl ItemsView {
             group_mode: ItemGroupMode::Category,
             sort_mode: ItemSortMode::NameAsc,
             dietary_filter: None,
+            group_mode_select,
+            sort_mode_select,
         };
 
         view_state.reload_data(cx);
@@ -516,9 +569,40 @@ impl ItemsView {
     }
 
     fn show_item_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. Extra Virgin Olive Oil")
+                .default_value(self.item_form_name.clone())
+        });
+        let category_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. Oils & Fats, Pantry, Dairy")
+                .default_value(self.item_form_category.clone())
+        });
+        let mode_options = vec![
+            SelectOption::new("BuyFinished", "Buy Finished Package"),
+            SelectOption::new("PreferMake", "Prefer Make / Expand"),
+            SelectOption::new("AskEveryTime", "Ask Every Time"),
+        ];
+        let mode_idx = match self.item_form_mode {
+            PurchaseMode::BuyFinished => 0,
+            PurchaseMode::PreferMake => 1,
+            PurchaseMode::AskEveryTime => 2,
+        };
+        let mode_select = cx.new(|cx| {
+            SelectState::new(
+                mode_options,
+                Some(IndexPath::default().row(mode_idx)),
+                window,
+                cx,
+            )
+        });
         let view = cx.entity().clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
+            let n_in = name_input.clone();
+            let c_in = category_input.clone();
+            let m_in = mode_select.clone();
             dialog.w(px(550.)).content(move |content, _, cx| {
                 let view_read = view.read(cx);
                 let is_edit = view_read.editing_item_id.is_some();
@@ -528,16 +612,7 @@ impl ItemsView {
                     "Add Domain Item"
                 };
 
-                let mode_options = vec![
-                    SelectOption::new("BuyFinished", "Buy Finished Package"),
-                    SelectOption::new("PreferMake", "Prefer Make / Expand"),
-                    SelectOption::new("AskEveryTime", "Ask Every Time"),
-                ];
-
-                let form_name = view_read.item_form_name.clone();
-                let form_category = view_read.item_form_category.clone();
                 let form_density = view_read.item_form_density;
-                let form_mode = view_read.item_form_mode;
                 let form_flags = view_read.item_form_dietary_flags.clone();
 
                 let form_cal = view_read.item_form_calories.unwrap_or(Decimal::ZERO);
@@ -546,13 +621,15 @@ impl ItemsView {
                 let form_fat = view_read.item_form_fat.unwrap_or(Decimal::ZERO);
 
                 let v_num = view.clone();
-                let v_mode = view.clone();
                 let v_save = view.clone();
                 let v_flags = view.clone();
                 let v_cal = view.clone();
                 let v_prot = view.clone();
                 let v_carb = view.clone();
                 let v_fat = view.clone();
+                let n_save = n_in.clone();
+                let c_save = c_in.clone();
+                let m_save = m_in.clone();
 
                 let common_flags = DietaryFlag::all().to_vec();
 
@@ -570,18 +647,8 @@ impl ItemsView {
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .child(
-                                FormInput::new("input-item-name")
-                                    .label("Item Name")
-                                    .placeholder("e.g. Extra Virgin Olive Oil")
-                                    .value(form_name),
-                            )
-                            .child(
-                                FormInput::new("input-item-category")
-                                    .label("Category")
-                                    .placeholder("e.g. Oils & Fats, Pantry, Dairy")
-                                    .value(form_category),
-                            )
+                            .child(form_field("Item Name", Input::new(&n_in)))
+                            .child(form_field("Category", Input::new(&c_in)))
                             .child(
                                 NumberInput::new("input-item-density", form_density)
                                     .label("Density (g/ml)")
@@ -606,22 +673,10 @@ impl ItemsView {
                                         }
                                     }),
                             )
-                            .child(
-                                Select::new("select-item-purchase-mode", mode_options)
-                                    .label("Preferred Purchase Mode")
-                                    .selected_id(Some(format!("{:?}", form_mode)))
-                                    .on_select(move |opt: &SelectOption, _window, cx| {
-                                        let mode = match opt.id.as_str() {
-                                            "PreferMake" => PurchaseMode::PreferMake,
-                                            "AskEveryTime" => PurchaseMode::AskEveryTime,
-                                            _ => PurchaseMode::BuyFinished,
-                                        };
-                                        v_mode.update(cx, |this, cx| {
-                                            this.item_form_mode = mode;
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
+                            .child(select_field(
+                                "Preferred Purchase Mode",
+                                Select::new(&m_in),
+                            ))
                             .child(
                                 div()
                                     .flex()
@@ -782,7 +837,18 @@ impl ItemsView {
                                     .primary()
                                     .label("Save Item")
                                     .on_click(move |_, window, cx| {
+                                        let name_val = n_save.read(cx).value().to_string();
+                                        let cat_val = c_save.read(cx).value().to_string();
+                                        let mode_val = m_save.read(cx).selected_value().cloned();
+                                        let mode = match mode_val.as_deref() {
+                                            Some("PreferMake") => PurchaseMode::PreferMake,
+                                            Some("AskEveryTime") => PurchaseMode::AskEveryTime,
+                                            _ => PurchaseMode::BuyFinished,
+                                        };
                                         v_save.update(cx, |this, cx| {
+                                            this.item_form_name = name_val;
+                                            this.item_form_category = cat_val;
+                                            this.item_form_mode = mode;
                                             this.save_item(cx);
                                         });
                                         window.close_dialog(cx);
@@ -883,13 +949,18 @@ impl ItemsView {
 
     pub fn open_add_store_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.store_form_name = String::new();
+        let store_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. Trader Joe's, Costco")
+                .default_value("")
+        });
         let view = cx.entity().clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
-            dialog.w(px(400.)).content(move |content, _, cx| {
-                let view_read = view.read(cx);
-                let form_name = view_read.store_form_name.clone();
+            let s_in = store_input.clone();
+            dialog.w(px(400.)).content(move |content, _, _cx| {
                 let v_save = view.clone();
+                let s_save = s_in.clone();
 
                 content
                     .child(
@@ -901,12 +972,9 @@ impl ItemsView {
                             ),
                     )
                     .child(
-                        div().py_4().child(
-                            FormInput::new("input-store-name")
-                                .label("Store Name")
-                                .placeholder("e.g. Trader Joe's, Costco")
-                                .value(form_name),
-                        ),
+                        div()
+                            .py_4()
+                            .child(form_field("Store Name", Input::new(&s_in))),
                     )
                     .child(
                         DialogFooter::new()
@@ -923,7 +991,9 @@ impl ItemsView {
                                     .primary()
                                     .label("Save Store")
                                     .on_click(move |_, window, cx| {
+                                        let store_name = s_save.read(cx).value().to_string();
                                         v_save.update(cx, |this, cx| {
+                                            this.store_form_name = store_name;
                                             this.save_store(cx);
                                         });
                                         window.close_dialog(cx);
@@ -960,18 +1030,6 @@ impl Render for ItemsView {
             .and_then(|id| self.cached_items.iter().find(|i| i.id == id).cloned());
         let _has_selected_item = selected_item.is_some();
         let _selected_item_packages = self.cached_packages.clone();
-
-        let group_options = vec![
-            SelectOption::new("Category", "Group by Category"),
-            SelectOption::new("PurchaseMode", "Group by Purchase Mode"),
-            SelectOption::new("DensityStatus", "Group by Density Status"),
-        ];
-
-        let sort_options = vec![
-            SelectOption::new("NameAsc", "Sort A-Z"),
-            SelectOption::new("NameDesc", "Sort Z-A"),
-            SelectOption::new("DensityDesc", "Sort by Density (g/ml)"),
-        ];
 
         div()
             .flex()
@@ -1020,28 +1078,14 @@ impl Render for ItemsView {
                             .items_center()
                             .gap_2()
                             .child(
-                                Select::new("select-item-group-mode", group_options)
-                                    .selected_id(Some(format!("{:?}", self.group_mode)))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        this.group_mode = match opt.id.as_str() {
-                                            "PurchaseMode" => ItemGroupMode::PurchaseMode,
-                                            "DensityStatus" => ItemGroupMode::DensityStatus,
-                                            _ => ItemGroupMode::Category,
-                                        };
-                                        this.reload_data(cx);
-                                    })),
+                                div()
+                                    .w(px(200.))
+                                    .child(Select::new(&self.group_mode_select)),
                             )
                             .child(
-                                Select::new("select-item-sort-mode", sort_options)
-                                    .selected_id(Some(format!("{:?}", self.sort_mode)))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        this.sort_mode = match opt.id.as_str() {
-                                            "NameDesc" => ItemSortMode::NameDesc,
-                                            "DensityDesc" => ItemSortMode::DensityDesc,
-                                            _ => ItemSortMode::NameAsc,
-                                        };
-                                        this.reload_data(cx);
-                                    })),
+                                div()
+                                    .w(px(200.))
+                                    .child(Select::new(&self.sort_mode_select)),
                             ),
                     )
                     .child(

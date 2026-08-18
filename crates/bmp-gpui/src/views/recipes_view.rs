@@ -3,6 +3,7 @@ use bmp_domain::*;
 use bmp_services::AppServices;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::WindowExt;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
@@ -10,12 +11,26 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_component::tag::Tag;
-use gpui_component::WindowExt;
 use gpui_component::{ActiveTheme, IndexPath, Selectable};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+
+fn parse_unit(s: &str) -> Unit {
+    match s {
+        "Kilogram" => Unit::Kilogram,
+        "Milliliter" => Unit::Milliliter,
+        "Liter" => Unit::Liter,
+        "Cup" => Unit::Cup,
+        "Tablespoon" => Unit::Tablespoon,
+        "Teaspoon" => Unit::Teaspoon,
+        "Ounce" => Unit::Ounce,
+        "Pound" => Unit::Pound,
+        "Each" => Unit::Each,
+        _ => Unit::Gram,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecipeGroupMode {
@@ -99,7 +114,10 @@ impl RenderOnce for RecipeListItem {
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("{} Servings", self.recipe.servings.normalize()))
-                        .child(format!("{} Ingredients, {} Yields", ing_count, yields_count)),
+                        .child(format!(
+                            "{} Ingredients, {} Yields",
+                            ing_count, yields_count
+                        )),
                 )
                 .child(
                     div()
@@ -208,17 +226,22 @@ impl RecipeListDelegate {
             groups.entry(key).or_default().push(r);
         }
 
-        self.sections = groups
-            .into_iter()
-            .map(|(title, mut recipes)| {
-                match self.sort_mode {
-                    RecipeSortMode::NameAsc => recipes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-                    RecipeSortMode::NameDesc => recipes.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
-                    RecipeSortMode::ServingsDesc => recipes.sort_by(|a, b| b.servings.cmp(&a.servings)),
-                }
-                RecipeSection { title, recipes }
-            })
-            .collect();
+        self.sections =
+            groups
+                .into_iter()
+                .map(|(title, mut recipes)| {
+                    match self.sort_mode {
+                        RecipeSortMode::NameAsc => recipes
+                            .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                        RecipeSortMode::NameDesc => recipes
+                            .sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                        RecipeSortMode::ServingsDesc => {
+                            recipes.sort_by(|a, b| b.servings.cmp(&a.servings))
+                        }
+                    }
+                    RecipeSection { title, recipes }
+                })
+                .collect();
     }
 }
 
@@ -230,7 +253,10 @@ impl ListDelegate for RecipeListDelegate {
     }
 
     fn items_count(&self, section: usize, _: &App) -> usize {
-        self.sections.get(section).map(|s| s.recipes.len()).unwrap_or(0)
+        self.sections
+            .get(section)
+            .map(|s| s.recipes.len())
+            .unwrap_or(0)
     }
 
     fn render_section_header(
@@ -274,7 +300,9 @@ impl ListDelegate for RecipeListDelegate {
     ) {
         self.selected_index = ix;
         let selected_recipe_id = ix.and_then(|idx| {
-            self.sections.get(idx.section).and_then(|s| s.recipes.get(idx.row).map(|r| r.id))
+            self.sections
+                .get(idx.section)
+                .and_then(|s| s.recipes.get(idx.row).map(|r| r.id))
         });
 
         if let Some(view) = self.view.upgrade() {
@@ -345,6 +373,8 @@ pub struct RecipesView {
     // Grouping & Sorting state
     pub group_mode: RecipeGroupMode,
     pub sort_mode: RecipeSortMode,
+    pub group_mode_select: Entity<SelectState<Vec<SelectOption>>>,
+    pub sort_mode_select: Entity<SelectState<Vec<SelectOption>>>,
 }
 
 impl RecipesView {
@@ -361,6 +391,55 @@ impl RecipesView {
         };
 
         let recipe_list = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+
+        let group_options = vec![
+            SelectOption::new("MealType", "Group: Meal Type"),
+            SelectOption::new("Alphabetical", "Group: Alphabetical"),
+            SelectOption::new("Servings", "Group: Servings"),
+        ];
+        let sort_options = vec![
+            SelectOption::new("NameAsc", "Sort: Name (A-Z)"),
+            SelectOption::new("NameDesc", "Sort: Name (Z-A)"),
+            SelectOption::new("ServingsDesc", "Sort: Highest Servings"),
+        ];
+        let group_mode_select = cx.new(|cx| {
+            SelectState::new(group_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+        let sort_mode_select = cx.new(|cx| {
+            SelectState::new(sort_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+
+        cx.subscribe_in(
+            &group_mode_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.group_mode = match id.as_str() {
+                        "Alphabetical" => RecipeGroupMode::Alphabetical,
+                        "Servings" => RecipeGroupMode::Servings,
+                        _ => RecipeGroupMode::MealType,
+                    };
+                    this.reload_data(cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &sort_mode_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.sort_mode = match id.as_str() {
+                        "NameDesc" => RecipeSortMode::NameDesc,
+                        "ServingsDesc" => RecipeSortMode::ServingsDesc,
+                        _ => RecipeSortMode::NameAsc,
+                    };
+                    this.reload_data(cx);
+                }
+            },
+        )
+        .detach();
 
         let mut view_state = Self {
             services,
@@ -399,6 +478,8 @@ impl RecipesView {
 
             group_mode: RecipeGroupMode::MealType,
             sort_mode: RecipeSortMode::NameAsc,
+            group_mode_select,
+            sort_mode_select,
         };
         view_state.reload_data(cx);
         view_state
@@ -474,7 +555,12 @@ impl RecipesView {
         self.show_recipe_dialog(window, cx);
     }
 
-    pub fn open_edit_recipe_modal(&mut self, recipe: &Recipe, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_edit_recipe_modal(
+        &mut self,
+        recipe: &Recipe,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let items = self.services.items.list_items().unwrap_or_default();
         let first_item = items.first().map(|i| i.id);
 
@@ -484,7 +570,10 @@ impl RecipesView {
         self.recipe_form_instructions = recipe.instructions.clone();
         self.recipe_form_yields = recipe.yields.clone();
         self.recipe_form_ingredients = recipe.ingredients.clone();
-        self.recipe_form_meal_type = recipe.meal_type.clone().unwrap_or_else(|| "Dinner".to_string());
+        self.recipe_form_meal_type = recipe
+            .meal_type
+            .clone()
+            .unwrap_or_else(|| "Dinner".to_string());
 
         self.ing_target_is_recipe = false;
         self.ing_target_item_id = first_item;
@@ -502,9 +591,160 @@ impl RecipesView {
     }
 
     fn show_recipe_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let view = cx.entity().clone();
-        window.open_dialog(cx, move |dialog, _, _| {
+        let name_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. Homemade Bolognese Sauce")
+                .default_value(self.recipe_form_name.clone())
+        });
+        let instructions_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. Sauté onions, brown meat, simmer for 45 mins")
+                    .default_value(self.recipe_form_instructions.clone())
+                    .multi_line(true)
+                    .rows(3)
+            });
+
+            let items = self.services.items.list_items().unwrap_or_default();
+            let item_options: Vec<SelectOption> = items
+                .iter()
+                .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
+                .collect();
+
+            let recipes = self.services.recipes.list_recipes().unwrap_or_default();
+            let recipe_options: Vec<SelectOption> = recipes
+                .iter()
+                .filter(|r| Some(r.id) != self.editing_recipe_id)
+                .map(|r| SelectOption::new(r.id.0.to_string(), format!("Recipe: {}", r.name)))
+                .collect();
+
+            let mut sub_options = vec![SelectOption::new("none", "None (No Substitute)")];
+            for i in &items {
+                sub_options.push(SelectOption::new(i.id.0.to_string(), i.name.clone()));
+            }
+
+            let unit_options = vec![
+                SelectOption::new("Gram", "Gram (g)"),
+                SelectOption::new("Kilogram", "Kilogram (kg)"),
+                SelectOption::new("Milliliter", "Milliliter (ml)"),
+                SelectOption::new("Liter", "Liter (L)"),
+                SelectOption::new("Cup", "Cup"),
+                SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
+                SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
+                SelectOption::new("Ounce", "Ounce (oz)"),
+                SelectOption::new("Pound", "Pound (lb)"),
+                SelectOption::new("Each", "Each (count)"),
+            ];
+
+            let target_type_options = vec![
+                SelectOption::new("item", "Raw Ingredient Item"),
+                SelectOption::new("recipe", "Sub-Recipe"),
+            ];
+
+            let meal_type_options = vec![
+                SelectOption::new("Breakfast", "Breakfast"),
+                SelectOption::new("Lunch", "Lunch"),
+                SelectOption::new("Dinner", "Dinner"),
+                SelectOption::new("Dessert", "Dessert"),
+                SelectOption::new("Snack", "Snack"),
+                SelectOption::new("Base / Component", "Base / Component"),
+            ];
+
+            let mt_idx = meal_type_options
+                .iter()
+                .position(|o| o.id == self.recipe_form_meal_type)
+                .unwrap_or(2);
+            let meal_type_select = cx.new(|cx| {
+                SelectState::new(
+                    meal_type_options,
+                    Some(IndexPath::default().row(mt_idx)),
+                    window,
+                    cx,
+                )
+            });
+
+            let yield_item_select = cx.new(|cx| {
+                SelectState::new(
+                    item_options.clone(),
+                    if item_options.is_empty() {
+                        None
+                    } else {
+                        Some(IndexPath::default().row(0))
+                    },
+                    window,
+                    cx,
+                )
+                .searchable(true)
+            });
+            let yield_unit_select = cx.new(|cx| {
+                SelectState::new(
+                    unit_options.clone(),
+                    Some(IndexPath::default().row(9)),
+                    window,
+                    cx,
+                )
+            });
+
+            let target_type_select = cx.new(|cx| {
+                SelectState::new(
+                    target_type_options,
+                    Some(IndexPath::default().row(0)),
+                    window,
+                    cx,
+                )
+            });
+            let target_recipe_select = cx.new(|cx| {
+                SelectState::new(
+                    recipe_options.clone(),
+                    if recipe_options.is_empty() {
+                        None
+                    } else {
+                        Some(IndexPath::default().row(0))
+                    },
+                    window,
+                    cx,
+                )
+                .searchable(true)
+            });
+            let target_item_select = cx.new(|cx| {
+                SelectState::new(
+                    item_options.clone(),
+                    if item_options.is_empty() {
+                        None
+                    } else {
+                        Some(IndexPath::default().row(0))
+                    },
+                    window,
+                    cx,
+                )
+                .searchable(true)
+            });
+            let ing_unit_select = cx.new(|cx| {
+                SelectState::new(
+                    unit_options.clone(),
+                    Some(IndexPath::default().row(0)),
+                    window,
+                    cx,
+                )
+            });
+            let substitute_select = cx.new(|cx| {
+                SelectState::new(sub_options, Some(IndexPath::default().row(0)), window, cx)
+                    .searchable(true)
+            });
+
+            let view = cx.entity().clone();
+            window.open_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
+            let n_in = name_input.clone();
+            let i_in = instructions_input.clone();
+            let mt_in = meal_type_select.clone();
+            let y_item_in = yield_item_select.clone();
+            let y_unit_in = yield_unit_select.clone();
+            let t_type_in = target_type_select.clone();
+            let t_rec_in = target_recipe_select.clone();
+            let t_item_in = target_item_select.clone();
+            let ing_unit_in = ing_unit_select.clone();
+            let sub_in = substitute_select.clone();
+
             dialog
                 .w(px(650.))
                 .content(move |content, _, cx| {
@@ -513,87 +753,38 @@ impl RecipesView {
                     let title = if is_edit { "Edit Recipe Definition" } else { "Create New Recipe" };
 
                     let items = view_read.services.items.list_items().unwrap_or_default();
-                    let item_options: Vec<SelectOption> = items
-                        .iter()
-                        .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
-                        .collect();
-
                     let recipes = view_read.services.recipes.list_recipes().unwrap_or_default();
-                    let recipe_options: Vec<SelectOption> = recipes
-                        .iter()
-                        .filter(|r| Some(r.id) != view_read.editing_recipe_id)
-                        .map(|r| SelectOption::new(r.id.0.to_string(), format!("Recipe: {}", r.name)))
-                        .collect();
 
-                    let mut sub_options = vec![SelectOption::new("none", "None (No Substitute)")];
-                    for i in &items {
-                        sub_options.push(SelectOption::new(i.id.0.to_string(), i.name.clone()));
-                    }
-
-                    let unit_options = vec![
-                        SelectOption::new("Gram", "Gram (g)"),
-                        SelectOption::new("Kilogram", "Kilogram (kg)"),
-                        SelectOption::new("Milliliter", "Milliliter (ml)"),
-                        SelectOption::new("Liter", "Liter (L)"),
-                        SelectOption::new("Cup", "Cup"),
-                        SelectOption::new("Tablespoon", "Tablespoon (tbsp)"),
-                        SelectOption::new("Teaspoon", "Teaspoon (tsp)"),
-                        SelectOption::new("Ounce", "Ounce (oz)"),
-                        SelectOption::new("Pound", "Pound (lb)"),
-                        SelectOption::new("Each", "Each (count)"),
-                    ];
-
-                    let target_type_options = vec![
-                        SelectOption::new("item", "Raw Ingredient Item"),
-                        SelectOption::new("recipe", "Sub-Recipe"),
-                    ];
-
-                    let meal_type_options = vec![
-                        SelectOption::new("Breakfast", "Breakfast"),
-                        SelectOption::new("Lunch", "Lunch"),
-                        SelectOption::new("Dinner", "Dinner"),
-                        SelectOption::new("Dessert", "Dessert"),
-                        SelectOption::new("Snack", "Snack"),
-                        SelectOption::new("Base / Component", "Base / Component"),
-                    ];
-
-                    let form_name = view_read.recipe_form_name.clone();
                     let form_servings = view_read.recipe_form_servings;
-                    let form_instructions = view_read.recipe_form_instructions.clone();
                     let form_yields = view_read.recipe_form_yields.clone();
                     let form_ingredients = view_read.recipe_form_ingredients.clone();
-                    let form_meal_type = view_read.recipe_form_meal_type.clone();
 
-                    let ing_is_recipe = view_read.ing_target_is_recipe;
-                    let ing_target_item_id = view_read.ing_target_item_id;
-                    let ing_target_recipe_id = view_read.ing_target_recipe_id;
+                    let ing_is_recipe = t_type_in.read(cx).selected_value().map(|s| s == "recipe").unwrap_or(false);
                     let ing_amount = view_read.ing_amount;
-                    let ing_unit = view_read.ing_unit.clone();
                     let ing_required = view_read.ing_required;
-                    let ing_sub_id = view_read.ing_substitute_id;
-
-                    let yield_item_id = view_read.yield_item_id;
                     let yield_amount = view_read.yield_amount;
-                    let yield_unit = view_read.yield_unit.clone();
 
                     let v_servings = view.clone();
-                    let v_meal_type = view.clone();
-                    let v_y_item = view.clone();
                     let v_y_amt = view.clone();
-                    let v_y_unit = view.clone();
                     let v_y_add = view.clone();
                     let v_y_rem = view.clone();
 
-                    let v_ing_type = view.clone();
-                    let v_target_item = view.clone();
-                    let v_target_rec = view.clone();
                     let v_amount = view.clone();
-                    let v_unit = view.clone();
                     let v_req = view.clone();
-                    let v_sub = view.clone();
                     let v_add_edge = view.clone();
                     let v_rem_edge = view.clone();
                     let v_save = view.clone();
+                    let n_save = n_in.clone();
+                    let i_save = i_in.clone();
+                    let mt_save = mt_in.clone();
+
+                    let y_item_add = y_item_in.clone();
+                    let y_unit_add = y_unit_in.clone();
+                    let t_type_add = t_type_in.clone();
+                    let t_rec_add = t_rec_in.clone();
+                    let t_item_add = t_item_in.clone();
+                    let ing_unit_add = ing_unit_in.clone();
+                    let sub_add = sub_in.clone();
 
                     let items_map: HashMap<ItemId, String> = items.iter().map(|i| (i.id, i.name.clone())).collect();
                     let recipes_map: HashMap<RecipeId, String> = recipes.iter().map(|r| (r.id, r.name.clone())).collect();
@@ -611,10 +802,10 @@ impl RecipesView {
                                 .flex_col()
                                 .gap_3()
                                 .child(
-                                    FormInput::new("input-recipe-name")
-                                        .label("Recipe Name")
-                                        .placeholder("e.g. Homemade Bolognese Sauce")
-                                        .value(form_name),
+                                    form_field(
+                                        "Recipe Name",
+                                        Input::new(&n_in),
+                                    ),
                                 )
                                 .child(
                                     div()
@@ -644,23 +835,14 @@ impl RecipesView {
                                                 }),
                                         )
                                         .child(
-                                            Select::new("select-recipe-meal-type", meal_type_options)
-                                                .label("Meal Type / Category")
-                                                .selected_id(Some(form_meal_type))
-                                                .on_select(move |opt: &SelectOption, _window, cx| {
-                                                    let mt = opt.id.clone();
-                                                    v_meal_type.update(cx, |this, cx| {
-                                                        this.recipe_form_meal_type = mt;
-                                                        cx.notify();
-                                                    });
-                                                }),
+                                            select_field("Meal Type / Category", Select::new(&mt_in)),
                                         ),
                                 )
                                 .child(
-                                    FormInput::new("input-recipe-instructions")
-                                        .label("Preparation Instructions")
-                                        .placeholder("e.g. Sauté onions, brown meat, simmer for 45 mins")
-                                        .value(form_instructions),
+                                    form_field(
+                                        "Preparation Instructions",
+                                        Input::new(&i_in),
+                                    ),
                                 )
                                 // Section: Recipe Yields (Produces)
                                 .child(
@@ -673,17 +855,7 @@ impl RecipesView {
                                         .rounded_md()
                                         .child(div().text_xs().font_weight(FontWeight::BOLD).child("Recipe Yields (Produced Output)"))
                                         .child(
-                                            Select::new("select-yield-item", item_options.clone())
-                                                .label("Yield Item")
-                                                .selected_id(yield_item_id.map(|id| id.0.to_string()))
-                                                .on_select(move |opt: &SelectOption, _window, cx| {
-                                                    if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                                        v_y_item.update(cx, |this, cx| {
-                                                            this.yield_item_id = Some(ItemId(uuid));
-                                                            cx.notify();
-                                                        });
-                                                    }
-                                                }),
+                                            select_field("Yield Item", Select::new(&y_item_in)),
                                         )
                                         .child(
                                             div()
@@ -703,24 +875,7 @@ impl RecipesView {
                                                         }),
                                                 )
                                                 .child(
-                                                    Select::new("select-yield-unit", unit_options.clone())
-                                                        .label("Yield Unit")
-                                                        .selected_id(Some(format!("{:?}", yield_unit)))
-                                                        .on_select(move |opt: &SelectOption, _, cx| {
-                                                            let unit = match opt.id.as_str() {
-                                                                "Kilogram" => Unit::Kilogram,
-                                                                "Milliliter" => Unit::Milliliter,
-                                                                "Liter" => Unit::Liter,
-                                                                "Cup" => Unit::Cup,
-                                                                "Tablespoon" => Unit::Tablespoon,
-                                                                "Teaspoon" => Unit::Teaspoon,
-                                                                "Ounce" => Unit::Ounce,
-                                                                "Pound" => Unit::Pound,
-                                                                "Each" => Unit::Each,
-                                                                _ => Unit::Gram,
-                                                            };
-                                                            v_y_unit.update(cx, |this, cx| { this.yield_unit = unit; cx.notify(); });
-                                                        }),
+                                                    select_field("Yield Unit", Select::new(&y_unit_in)),
                                                 ),
                                         )
                                         .child(
@@ -728,9 +883,13 @@ impl RecipesView {
                                                 .secondary()
                                                 .label("+ Add Yield Item")
                                                 .on_click(move |_, _, cx| {
+                                                    let y_opt = y_item_add.read(cx).selected_value().cloned();
+                                                    let u_opt = y_unit_add.read(cx).selected_value().cloned();
+                                                    let y_uuid = y_opt.and_then(|s| uuid::Uuid::from_str(&s).ok()).map(ItemId);
+                                                    let unit = u_opt.map(|u| parse_unit(&u)).unwrap_or(Unit::Gram);
                                                     v_y_add.update(cx, |this, cx| {
-                                                        if let Some(y_id) = this.yield_item_id {
-                                                            if let Ok(qty) = Quantity::new(this.yield_amount, this.yield_unit.clone()) {
+                                                        if let Some(y_id) = y_uuid {
+                                                            if let Ok(qty) = Quantity::new(this.yield_amount, unit) {
                                                                 this.recipe_form_yields.push((y_id, qty));
                                                             }
                                                         }
@@ -783,42 +942,13 @@ impl RecipesView {
                                         .rounded_md()
                                         .child(div().text_xs().font_weight(FontWeight::BOLD).child("Add Ingredient Edge (Item or Sub-Recipe)"))
                                         .child(
-                                            Select::new("select-ing-target-type", target_type_options)
-                                                .label("Target Component Type")
-                                                .selected_id(Some(if ing_is_recipe { "recipe".to_string() } else { "item".to_string() }))
-                                                .on_select(move |opt: &SelectOption, _, cx| {
-                                                    let is_rec = opt.id == "recipe";
-                                                    v_ing_type.update(cx, |this, cx| {
-                                                        this.ing_target_is_recipe = is_rec;
-                                                        cx.notify();
-                                                    });
-                                                }),
+                                            select_field("Target Component Type", Select::new(&t_type_in)),
                                         )
                                         .child(
                                             if ing_is_recipe {
-                                                Select::new("select-ing-recipe-target", recipe_options)
-                                                    .label("Sub-Recipe Target")
-                                                    .selected_id(ing_target_recipe_id.map(|id| id.0.to_string()))
-                                                    .on_select(move |opt: &SelectOption, _, cx| {
-                                                        if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                                            v_target_rec.update(cx, |this, cx| {
-                                                                this.ing_target_recipe_id = Some(RecipeId(uuid));
-                                                                cx.notify();
-                                                            });
-                                                        }
-                                                    })
+                                                select_field("Sub-Recipe Target", Select::new(&t_rec_in))
                                             } else {
-                                                Select::new("select-ing-item-target", item_options.clone())
-                                                    .label("Ingredient Item Target")
-                                                    .selected_id(ing_target_item_id.map(|id| id.0.to_string()))
-                                                    .on_select(move |opt: &SelectOption, _, cx| {
-                                                        if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                                            v_target_item.update(cx, |this, cx| {
-                                                                this.ing_target_item_id = Some(ItemId(uuid));
-                                                                cx.notify();
-                                                            });
-                                                        }
-                                                    })
+                                                select_field("Ingredient Item Target", Select::new(&t_item_in))
                                             },
                                         )
                                         .child(
@@ -839,41 +969,11 @@ impl RecipesView {
                                                         }),
                                                 )
                                                 .child(
-                                                    Select::new("select-ing-unit", unit_options.clone())
-                                                        .label("Unit")
-                                                        .selected_id(Some(format!("{:?}", ing_unit)))
-                                                        .on_select(move |opt: &SelectOption, _, cx| {
-                                                            let unit = match opt.id.as_str() {
-                                                                "Kilogram" => Unit::Kilogram,
-                                                                "Milliliter" => Unit::Milliliter,
-                                                                "Liter" => Unit::Liter,
-                                                                "Cup" => Unit::Cup,
-                                                                "Tablespoon" => Unit::Tablespoon,
-                                                                "Teaspoon" => Unit::Teaspoon,
-                                                                "Ounce" => Unit::Ounce,
-                                                                "Pound" => Unit::Pound,
-                                                                "Each" => Unit::Each,
-                                                                _ => Unit::Gram,
-                                                            };
-                                                            v_unit.update(cx, |this, cx| { this.ing_unit = unit; cx.notify(); });
-                                                        }),
+                                                    select_field("Unit", Select::new(&ing_unit_in)),
                                                 ),
                                         )
                                         .child(
-                                            Select::new("select-ing-substitute", sub_options)
-                                                .label("Optional Per-Recipe Substitute")
-                                                .selected_id(ing_sub_id.map(|id| id.0.to_string()).or_else(|| Some("none".to_string())))
-                                                .on_select(move |opt: &SelectOption, _, cx| {
-                                                    let sub = if opt.id == "none" {
-                                                        None
-                                                    } else {
-                                                        uuid::Uuid::from_str(&opt.id).ok().map(ItemId)
-                                                    };
-                                                    v_sub.update(cx, |this, cx| {
-                                                        this.ing_substitute_id = sub;
-                                                        cx.notify();
-                                                    });
-                                                }),
+                                            select_field("Optional Per-Recipe Substitute", Select::new(&sub_in)),
                                         )
                                         .child(
                                             Checkbox::new("cb-ing-required")
@@ -891,23 +991,44 @@ impl RecipesView {
                                                 .secondary()
                                                 .label("+ Add Edge to Recipe")
                                                 .on_click(move |_, _, cx| {
-                                                    v_add_edge.update(cx, |this, cx| {
-                                                        let target = if this.ing_target_is_recipe {
-                                                            this.ing_target_recipe_id.map(ItemOrRecipeId::Recipe)
+                                                    let is_rec = t_type_add.read(cx).selected_value().map(|s| s == "recipe").unwrap_or(false);
+                                                    let r_opt = t_rec_add.read(cx).selected_value().cloned();
+                                                    let i_opt = t_item_add.read(cx).selected_value().cloned();
+                                                    let u_opt = ing_unit_add.read(cx).selected_value().cloned();
+                                                    let s_opt = sub_add.read(cx).selected_value().cloned();
+
+                                                    let unit = u_opt.map(|u| parse_unit(&u)).unwrap_or(Unit::Gram);
+                                                    let sub_id = s_opt.and_then(|s| {
+                                                        if s == "none" {
+                                                            None
                                                         } else {
-                                                            this.ing_target_item_id.map(ItemOrRecipeId::Item)
+                                                            uuid::Uuid::from_str(&s).ok().map(ItemId)
+                                                        }
+                                                    });
+
+                                                    v_add_edge.update(cx, |this, cx| {
+                                                        let target = if is_rec {
+                                                            if let Some(uuid) = r_opt.and_then(|s| uuid::Uuid::from_str(&s).ok()) {
+                                                                ItemOrRecipeId::Recipe(RecipeId(uuid))
+                                                            } else {
+                                                                return;
+                                                            }
+                                                        } else {
+                                                            if let Some(uuid) = i_opt.and_then(|s| uuid::Uuid::from_str(&s).ok()) {
+                                                                ItemOrRecipeId::Item(ItemId(uuid))
+                                                            } else {
+                                                                return;
+                                                            }
                                                         };
 
-                                                        if let Some(t) = target {
-                                                            if let Ok(qty) = Quantity::new(this.ing_amount, this.ing_unit.clone()) {
-                                                                this.recipe_form_ingredients.push(IngredientEdge {
-                                                                    target: t,
-                                                                    quantity: qty,
-                                                                    required: this.ing_required,
-                                                                    per_recipe_substitute: this.ing_substitute_id,
-                                                                    cycle_flag: false,
-                                                                });
-                                                            }
+                                                        if let Ok(qty) = Quantity::new(this.ing_amount, unit) {
+                                                            this.recipe_form_ingredients.push(IngredientEdge {
+                                                                target,
+                                                                quantity: qty,
+                                                                required: this.ing_required,
+                                                                per_recipe_substitute: sub_id,
+                                                                cycle_flag: false,
+                                                            });
                                                         }
                                                         cx.notify();
                                                     });
@@ -969,7 +1090,17 @@ impl RecipesView {
                                         .primary()
                                         .label("Save Recipe")
                                         .on_click(move |_, window, cx| {
+                                            let name_val = n_save.read(cx).value().to_string();
+                                            let inst_val = i_save.read(cx).value().to_string();
+                                            let mt_str = mt_save
+                                                .read(cx)
+                                                .selected_value()
+                                                .cloned()
+                                                .unwrap_or_else(|| "Dinner".to_string());
                                             v_save.update(cx, |this, cx| {
+                                                this.recipe_form_name = name_val;
+                                                this.recipe_form_instructions = inst_val;
+                                                this.recipe_form_meal_type = mt_str;
                                                 this.save_recipe(cx);
                                             });
                                             window.close_dialog(cx);
@@ -1011,7 +1142,12 @@ impl RecipesView {
         self.reload_data(cx);
     }
 
-    pub fn open_make_recipe_modal(&mut self, recipe: &Recipe, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_make_recipe_modal(
+        &mut self,
+        recipe: &Recipe,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.make_batches = dec!(1.0);
         self.make_selected_yield = recipe.yields.first().map(|y| y.0);
         self.make_status = String::new();
@@ -1036,7 +1172,9 @@ impl RecipesView {
                     .child(
                         DialogHeader::new()
                             .child(DialogTitle::new().child(format!("Make Recipe: {}", rec.name)))
-                            .child(DialogDescription::new().child("Scale batches, consume pantry ingredients, and produce yields")),
+                            .child(DialogDescription::new().child(
+                                "Scale batches, consume pantry ingredients, and produce yields",
+                            )),
                     )
                     .child(
                         div()
@@ -1049,7 +1187,12 @@ impl RecipesView {
                                     .flex()
                                     .items_center()
                                     .justify_between()
-                                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Batch Multiplier:"))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::BOLD)
+                                            .child("Batch Multiplier:"),
+                                    )
                                     .child(
                                         div()
                                             .flex()
@@ -1068,7 +1211,10 @@ impl RecipesView {
                                                         });
                                                     }),
                                             )
-                                            .child(Tag::new().child(format!("{}x", batches.normalize())))
+                                            .child(
+                                                Tag::new()
+                                                    .child(format!("{}x", batches.normalize())),
+                                            )
                                             .child(
                                                 Button::new("btn-inc-batch")
                                                     .secondary()
@@ -1114,10 +1260,16 @@ impl RecipesView {
     }
 
     pub fn execute_make_recipe(&mut self, recipe: &Recipe, cx: &mut Context<Self>) {
-        let items_map: HashMap<ItemId, Item> =
-            self.cached_items.iter().map(|i| (i.id, i.clone())).collect();
-        let recipes_map: HashMap<RecipeId, Recipe> =
-            self.cached_recipes.iter().map(|r| (r.id, r.clone())).collect();
+        let items_map: HashMap<ItemId, Item> = self
+            .cached_items
+            .iter()
+            .map(|i| (i.id, i.clone()))
+            .collect();
+        let recipes_map: HashMap<RecipeId, Recipe> = self
+            .cached_recipes
+            .iter()
+            .map(|r| (r.id, r.clone()))
+            .collect();
 
         let mut config = MakeRecipeConfig::default();
         config.batches = self.make_batches;
@@ -1126,12 +1278,22 @@ impl RecipesView {
         match evaluate_make_recipe_full(recipe, &config, &items_map, &recipes_map) {
             Ok(execution) => {
                 for (item_id, qty) in execution.ingredients_to_consume {
-                    let _ = self.services.pantry.consume_pantry_item(item_id, qty.amount, qty.unit);
+                    let _ = self
+                        .services
+                        .pantry
+                        .consume_pantry_item(item_id, qty.amount, qty.unit);
                 }
                 for (yield_id, qty) in execution.yields_produced {
-                    let _ = self.services.pantry.add_pantry_entry(yield_id, qty.amount, qty.unit, None);
+                    let _ = self
+                        .services
+                        .pantry
+                        .add_pantry_entry(yield_id, qty.amount, qty.unit, None);
                 }
-                self.status_msg = format!("Cooked {}x '{}'! Ingredients deducted & yield stored.", self.make_batches.normalize(), recipe.name);
+                self.status_msg = format!(
+                    "Cooked {}x '{}'! Ingredients deducted & yield stored.",
+                    self.make_batches.normalize(),
+                    recipe.name
+                );
             }
             Err(e) => {
                 self.status_msg = format!("Make Recipe Error: {}", e);
@@ -1146,18 +1308,6 @@ impl Render for RecipesView {
         let selected_recipe = self
             .selected_recipe_id
             .and_then(|id| self.cached_recipes.iter().find(|r| r.id == id).cloned());
-
-        let group_options = vec![
-            SelectOption::new("MealType", "Group by Meal Type"),
-            SelectOption::new("Alphabetical", "Group Alphabetically"),
-            SelectOption::new("Servings", "Group by Servings Scale"),
-        ];
-
-        let sort_options = vec![
-            SelectOption::new("NameAsc", "Sort A-Z"),
-            SelectOption::new("NameDesc", "Sort Z-A"),
-            SelectOption::new("ServingsDesc", "Sort by Servings (High to Low)"),
-        ];
 
         div()
             .flex()
@@ -1206,28 +1356,14 @@ impl Render for RecipesView {
                             .items_center()
                             .gap_2()
                             .child(
-                                Select::new("select-recipe-group-mode", group_options)
-                                    .selected_id(Some(format!("{:?}", self.group_mode)))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        this.group_mode = match opt.id.as_str() {
-                                            "Alphabetical" => RecipeGroupMode::Alphabetical,
-                                            "Servings" => RecipeGroupMode::Servings,
-                                            _ => RecipeGroupMode::MealType,
-                                        };
-                                        this.reload_data(cx);
-                                    })),
+                                div()
+                                    .w(px(200.))
+                                    .child(Select::new(&self.group_mode_select)),
                             )
                             .child(
-                                Select::new("select-recipe-sort-mode", sort_options)
-                                    .selected_id(Some(format!("{:?}", self.sort_mode)))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        this.sort_mode = match opt.id.as_str() {
-                                            "NameDesc" => RecipeSortMode::NameDesc,
-                                            "ServingsDesc" => RecipeSortMode::ServingsDesc,
-                                            _ => RecipeSortMode::NameAsc,
-                                        };
-                                        this.reload_data(cx);
-                                    })),
+                                div()
+                                    .w(px(200.))
+                                    .child(Select::new(&self.sort_mode_select)),
                             ),
                     )
                     .child(

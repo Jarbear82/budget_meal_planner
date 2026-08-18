@@ -4,14 +4,14 @@ use bmp_services::AppServices;
 use chrono::Utc;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::ActiveTheme;
+use gpui_component::WindowExt;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
 use gpui_component::tag::Tag;
-use gpui_component::WindowExt;
-use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::str::FromStr;
@@ -39,10 +39,77 @@ pub struct ShoppingView {
     pub custom_item_id: Option<ItemId>,
     pub custom_amount: Decimal,
     pub custom_unit: Unit,
+
+    pub store_filter_select: Entity<SelectState<Vec<SelectOption>>>,
+    pub tax_rate_select: Entity<SelectState<Vec<SelectOption>>>,
 }
 
 impl ShoppingView {
-    pub fn new(services: AppServices, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(services: AppServices, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let stores = services.items.list_stores().unwrap_or_default();
+        let store_options: Vec<SelectOption> =
+            std::iter::once(SelectOption::new("all", "All Stores (Best Price)"))
+                .chain(
+                    stores
+                        .iter()
+                        .map(|s| SelectOption::new(s.id.0.to_string(), s.name.clone())),
+                )
+                .collect();
+
+        let tax_options = vec![
+            SelectOption::new("0", "0% Tax"),
+            SelectOption::new("0.05", "5.0% Sales Tax"),
+            SelectOption::new("0.0825", "8.25% Sales Tax"),
+            SelectOption::new("0.10", "10.0% Sales Tax"),
+        ];
+
+        let store_filter_select = cx.new(|cx| {
+            SelectState::new(
+                store_options,
+                Some(IndexPath::default().row(0)),
+                window,
+                cx,
+            )
+        });
+        let tax_rate_select = cx.new(|cx| {
+            SelectState::new(
+                tax_options,
+                Some(IndexPath::default().row(0)),
+                window,
+                cx,
+            )
+        });
+
+        cx.subscribe_in(
+            &store_filter_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    if id == "all" {
+                        this.selected_store_id = None;
+                    } else if let Ok(uuid) = uuid::Uuid::from_str(id) {
+                        this.selected_store_id = Some(StoreId(uuid));
+                    }
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &tax_rate_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    if let Ok(rate) = Decimal::from_str(id) {
+                        this.tax_rate = rate;
+                    }
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
         let mut view = Self {
             services,
             status_msg: "Shopping list manager ready".to_string(),
@@ -63,6 +130,8 @@ impl ShoppingView {
             custom_item_id: None,
             custom_amount: dec!(1),
             custom_unit: Unit::Each,
+            store_filter_select,
+            tax_rate_select,
         };
         view.reload_data(cx);
         view
@@ -124,7 +193,10 @@ impl ShoppingView {
                 if let Ok(Some(mut item)) = self.services.items.get_item(item_id) {
                     item.preferred_purchase_mode = new_mode;
                     let _ = self.services.items.update_item(&item);
-                    self.status_msg = format!("Updated purchase mode for '{}' to {:?}", item.name, new_mode);
+                    self.status_msg = format!(
+                        "Updated purchase mode for '{}' to {:?}",
+                        item.name, new_mode
+                    );
                 }
             }
         }
@@ -285,7 +357,12 @@ impl ShoppingView {
                     if self
                         .services
                         .pantry
-                        .add_pantry_entry(line.item_id, total_qty_purchased.amount, total_qty_purchased.unit, None)
+                        .add_pantry_entry(
+                            line.item_id,
+                            total_qty_purchased.amount,
+                            total_qty_purchased.unit,
+                            None,
+                        )
                         .is_ok()
                     {
                         deposited_count += 1;
@@ -295,12 +372,20 @@ impl ShoppingView {
         }
 
         let mut updated_packages_count = 0;
-        if self.update_package_prices && list.total > Decimal::ZERO && self.receipt_actual_total != list.total {
+        if self.update_package_prices
+            && list.total > Decimal::ZERO
+            && self.receipt_actual_total != list.total
+        {
             let scale_factor = self.receipt_actual_total / list.total;
             for line in &list.items {
                 if line.is_checked {
                     let new_price = (line.package_price * scale_factor).round_dp(2);
-                    if self.services.items.update_package_price(line.package_id, new_price).is_ok() {
+                    if self
+                        .services
+                        .items
+                        .update_package_price(line.package_id, new_price)
+                        .is_ok()
+                    {
                         updated_packages_count += 1;
                     }
                 }
@@ -341,130 +426,139 @@ impl ShoppingView {
         self.custom_amount = dec!(1);
         self.custom_unit = Unit::Each;
 
+        let item_options: Vec<SelectOption> = items
+            .iter()
+            .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
+            .collect();
+
+        let unit_options = vec![
+            SelectOption::new("Each", "Each (count)"),
+            SelectOption::new("Gram", "Gram (g)"),
+            SelectOption::new("Kilogram", "Kilogram (kg)"),
+            SelectOption::new("Milliliter", "Milliliter (ml)"),
+            SelectOption::new("Liter", "Liter (L)"),
+            SelectOption::new("Cup", "Cup"),
+            SelectOption::new("Pound", "Pound (lb)"),
+        ];
+
+        let item_select = cx.new(|cx| {
+            SelectState::new(
+                item_options,
+                if items.is_empty() {
+                    None
+                } else {
+                    Some(IndexPath::default().row(0))
+                },
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        let unit_select = cx.new(|cx| {
+            SelectState::new(
+                unit_options,
+                Some(IndexPath::default().row(0)),
+                window,
+                cx,
+            )
+        });
+
         let view = cx.entity().clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
-            dialog
-                .w(px(500.))
-                .content(move |content, _, cx| {
-                    let view_read = view.read(cx);
-                    let items = &view_read.cached_items;
-                    let item_options: Vec<SelectOption> = items
-                        .iter()
-                        .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
-                        .collect();
+            let i_in = item_select.clone();
+            let u_in = unit_select.clone();
+            dialog.w(px(500.)).content(move |content, _, cx| {
+                let view_read = view.read(cx);
+                let custom_amount = view_read.custom_amount;
 
-                    let unit_options = vec![
-                        SelectOption::new("Each", "Each (count)"),
-                        SelectOption::new("Gram", "Gram (g)"),
-                        SelectOption::new("Kilogram", "Kilogram (kg)"),
-                        SelectOption::new("Milliliter", "Milliliter (ml)"),
-                        SelectOption::new("Liter", "Liter (L)"),
-                        SelectOption::new("Cup", "Cup"),
-                        SelectOption::new("Pound", "Pound (lb)"),
-                    ];
+                let v_num_amt = view.clone();
+                let v_save = view.clone();
+                let i_save = i_in.clone();
+                let u_save = u_in.clone();
 
-                    let custom_item_id = view_read.custom_item_id;
-                    let custom_amount = view_read.custom_amount;
-                    let custom_unit = view_read.custom_unit.clone();
-
-                    let v_select_item = view.clone();
-                    let v_num_amt = view.clone();
-                    let v_select_unit = view.clone();
-                    let v_save = view.clone();
-
-                    content
-                        .child(
-                            DialogHeader::new()
-                                .child(DialogTitle::new().child("Add Extra Shopping Requirement"))
-                                .child(DialogDescription::new().child("Manually add a package requirement to your shopping list")),
-                        )
-                        .child(
-                            div()
-                                .py_4()
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .child(
-                                    Select::new("select-custom-item", item_options)
-                                        .label("Item")
-                                        .selected_id(custom_item_id.map(|id| id.0.to_string()))
-                                        .on_select(move |opt: &SelectOption, _window, cx| {
-                                            if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                                v_select_item.update(cx, |this, cx| {
-                                                    this.custom_item_id = Some(ItemId(uuid));
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    NumberInput::new("input-custom-amount", custom_amount)
-                                        .label("Required Amount")
-                                        .step(dec!(1))
-                                        .on_increment({
-                                            let v = v_num_amt.clone();
-                                            move |val, _window, cx| {
-                                                v.update(cx, |this, cx| {
-                                                    this.custom_amount = *val;
-                                                    cx.notify();
-                                                });
-                                            }
-                                        })
-                                        .on_decrement({
-                                            let v = v_num_amt.clone();
-                                            move |val, _window, cx| {
-                                                v.update(cx, |this, cx| {
-                                                    this.custom_amount = *val;
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    Select::new("select-custom-unit", unit_options)
-                                        .label("Unit")
-                                        .selected_id(Some(format!("{:?}", custom_unit)))
-                                        .on_select(move |opt: &SelectOption, _window, cx| {
-                                            let unit = match opt.id.as_str() {
-                                                "Kilogram" => Unit::Kilogram,
-                                                "Milliliter" => Unit::Milliliter,
-                                                "Liter" => Unit::Liter,
-                                                "Cup" => Unit::Cup,
-                                                "Pound" => Unit::Pound,
-                                                "Each" => Unit::Each,
-                                                _ => Unit::Gram,
-                                            };
-                                            v_select_unit.update(cx, |this, cx| {
-                                                this.custom_unit = unit;
+                content
+                    .child(
+                        DialogHeader::new()
+                            .child(DialogTitle::new().child("Add Extra Shopping Requirement"))
+                            .child(
+                                DialogDescription::new().child(
+                                    "Manually add a package requirement to your shopping list",
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .py_4()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(select_field("Item", Select::new(&i_in)))
+                            .child(
+                                NumberInput::new("input-custom-amount", custom_amount)
+                                    .label("Required Amount")
+                                    .step(dec!(1))
+                                    .on_increment({
+                                        let v = v_num_amt.clone();
+                                        move |val, _window, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.custom_amount = *val;
                                                 cx.notify();
                                             });
-                                        }),
-                                ),
-                        )
-                        .child(
-                            DialogFooter::new()
-                                .child(
-                                    Button::new("btn-cancel-custom")
-                                        .secondary()
-                                        .label("Cancel")
-                                        .on_click(|_, window, cx| {
-                                            window.close_dialog(cx);
-                                        }),
-                                )
-                                .child(
-                                    Button::new("btn-save-custom")
-                                        .primary()
-                                        .label("Add to Shopping List")
-                                        .on_click(move |_, window, cx| {
-                                            v_save.update(cx, |this, cx| {
-                                                this.add_custom_requirement(cx);
+                                        }
+                                    })
+                                    .on_decrement({
+                                        let v = v_num_amt.clone();
+                                        move |val, _window, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.custom_amount = *val;
+                                                cx.notify();
                                             });
-                                            window.close_dialog(cx);
-                                        }),
-                                ),
-                        )
-                })
+                                        }
+                                    }),
+                            )
+                            .child(select_field("Unit", Select::new(&u_in))),
+                    )
+                    .child(
+                        DialogFooter::new()
+                            .child(
+                                Button::new("btn-cancel-custom")
+                                    .secondary()
+                                    .label("Cancel")
+                                    .on_click(|_, window, cx| {
+                                        window.close_dialog(cx);
+                                    }),
+                            )
+                            .child(
+                                Button::new("btn-save-custom")
+                                    .primary()
+                                    .label("Add to Shopping List")
+                                    .on_click(move |_, window, cx| {
+                                        let i_uuid = i_save
+                                            .read(cx)
+                                            .selected_value()
+                                            .and_then(|s| uuid::Uuid::from_str(&s).ok())
+                                            .map(ItemId);
+                                        let u_str = u_save.read(cx).selected_value().cloned();
+                                        let unit = match u_str.as_deref() {
+                                            Some("Kilogram") => Unit::Kilogram,
+                                            Some("Milliliter") => Unit::Milliliter,
+                                            Some("Liter") => Unit::Liter,
+                                            Some("Cup") => Unit::Cup,
+                                            Some("Pound") => Unit::Pound,
+                                            Some("Each") => Unit::Each,
+                                            _ => Unit::Gram,
+                                        };
+                                        v_save.update(cx, |this, cx| {
+                                            this.custom_item_id = i_uuid;
+                                            this.custom_unit = unit;
+                                            this.add_custom_requirement(cx);
+                                        });
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                    )
+            })
         });
     }
 
@@ -494,11 +588,11 @@ impl ShoppingView {
             None
         };
 
-        match self.services.shopping.generate_shopping_list(
-            reqs,
-            self.selected_store_id,
-            tax_opt,
-        ) {
+        match self
+            .services
+            .shopping
+            .generate_shopping_list(reqs, self.selected_store_id, tax_opt)
+        {
             Ok(new_list) => {
                 if let Some(ref mut existing) = self.active_list {
                     existing.items.extend(new_list.items);
@@ -520,20 +614,12 @@ impl ShoppingView {
 impl Render for ShoppingView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stores = self.cached_stores.clone();
-
-        let store_options: Vec<SelectOption> = std::iter::once(SelectOption::new("all", "All Stores (Best Price)"))
-            .chain(stores.iter().map(|s| SelectOption::new(s.id.0.to_string(), s.name.clone())))
-            .collect();
-
-        let tax_options = vec![
-            SelectOption::new("0", "0% Tax"),
-            SelectOption::new("0.05", "5.0% Sales Tax"),
-            SelectOption::new("0.0825", "8.25% Sales Tax"),
-            SelectOption::new("0.10", "10.0% Sales Tax"),
-        ];
-
         let has_list = self.active_list.is_some();
-        let total_items_count = self.active_list.as_ref().map(|l| l.items.len()).unwrap_or(0);
+        let total_items_count = self
+            .active_list
+            .as_ref()
+            .map(|l| l.items.len())
+            .unwrap_or(0);
         let checked_items_count = self
             .active_list
             .as_ref()
@@ -628,34 +714,12 @@ impl Render for ShoppingView {
                     .child(
                         div()
                             .w_64()
-                            .child(
-                                Select::new("select-shopping-store-filter", store_options)
-                                    .label("Target Store Filter")
-                                    .selected_id(self.selected_store_id.map(|id| id.0.to_string()))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        if opt.id == "all" {
-                                            this.selected_store_id = None;
-                                        } else if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                            this.selected_store_id = Some(StoreId(uuid));
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
+                            .child(select_field("Target Store Filter", Select::new(&self.store_filter_select))),
                     )
                     .child(
                         div()
                             .w_48()
-                            .child(
-                                Select::new("select-tax-rate", tax_options)
-                                    .label("Applied Sales Tax")
-                                    .selected_id(Some(format!("{}", self.tax_rate)))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        if let Ok(rate) = Decimal::from_str(&opt.id) {
-                                            this.tax_rate = rate;
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
+                            .child(select_field("Applied Sales Tax", Select::new(&self.tax_rate_select))),
                     )
                     .child(Alert::new("shopping-status-alert", format!("Status: {}", self.status_msg))),
             )

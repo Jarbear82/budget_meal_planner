@@ -53,9 +53,9 @@ impl BudgetMealPlannerApp {
         let schedule_view = cx.new(|_| ScheduleView::new(services.clone()));
         let shopping_view = cx.new(|cx| ShoppingView::new(services.clone(), window, cx));
         let pantry_view = cx.new(|cx| PantryView::new(services.clone(), window, cx));
-        let analytics_view = cx.new(|_| AnalyticsView::new(services.clone()));
+        let analytics_view = cx.new(|cx| AnalyticsView::new(services.clone(), window, cx));
         let settings_view = cx.new(|cx| SettingsView::new(cx, services.clone()));
-        let showcase_view = cx.new(|_| ComponentShowcaseView::new());
+        let showcase_view = cx.new(|cx| ComponentShowcaseView::new(window, cx));
 
         Self {
             _services: services,

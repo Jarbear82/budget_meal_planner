@@ -7,147 +7,23 @@ use gpui_component::ActiveTheme;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-/// FormInput legacy view wrapper utilizing gpui_component Input styling.
-#[derive(IntoElement)]
-pub struct FormInput {
-    id: ElementId,
-    label: Option<SharedString>,
-    placeholder: SharedString,
-    value: SharedString,
-    helper_text: Option<SharedString>,
-    error_text: Option<SharedString>,
-    disabled: bool,
-    full_width: bool,
-    on_change: Option<Arc<dyn Fn(&str, &mut Window, &mut App) + 'static>>,
-}
-
-impl FormInput {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            label: None,
-            placeholder: SharedString::from("Enter text..."),
-            value: SharedString::from(""),
-            helper_text: None,
-            error_text: None,
-            disabled: false,
-            full_width: true,
-            on_change: None,
-        }
-    }
-
-    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-
-    pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
-        self.placeholder = placeholder.into();
-        self
-    }
-
-    pub fn value(mut self, value: impl Into<SharedString>) -> Self {
-        self.value = value.into();
-        self
-    }
-
-    pub fn helper_text(mut self, helper: impl Into<SharedString>) -> Self {
-        self.helper_text = Some(helper.into());
-        self
-    }
-
-    pub fn error_text(mut self, error: impl Into<SharedString>) -> Self {
-        self.error_text = Some(error.into());
-        self
-    }
-
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
-    pub fn on_change<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(&str, &mut Window, &mut App) + 'static,
-    {
-        self.on_change = Some(Arc::new(callback));
-        self
-    }
-}
-
-impl RenderOnce for FormInput {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let has_error = self.error_text.is_some();
-        let border_col = if has_error {
-            cx.theme().accent
-        } else {
-            cx.theme().border
-        };
-
-        let is_empty = self.value.is_empty();
-        let display_text = if is_empty {
-            self.placeholder.clone()
-        } else {
-            self.value.clone()
-        };
-
-        div()
-            .id(self.id)
-            .flex()
-            .flex_col()
-            .gap_1()
-            .when(self.full_width, |this| this.w_full())
-            .when_some(self.label, |this, label| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child(label),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .px_3()
-                    .py_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(border_col)
-                    .bg(if self.disabled {
-                        cx.theme().muted
-                    } else {
-                        cx.theme().background
-                    })
-                    .text_sm()
-                    .text_color(if is_empty {
-                        cx.theme().muted_foreground
-                    } else {
-                        cx.theme().foreground
-                    })
-                    .child(display_text),
-            )
-            .when(has_error, |this| {
-                let err = self.error_text.unwrap();
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().accent)
-                        .child(err),
-                )
-            })
-            .when(!has_error, |this| {
-                this.when_some(self.helper_text, |this, helper| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(helper),
-                    )
-                })
-            })
-    }
+/// A clean form field container pairing a semantic label with a GPUI input widget.
+pub fn form_field(
+    label: impl Into<SharedString>,
+    input: impl IntoElement,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(label.into()),
+        )
+        .child(input)
 }
 
 /// A specialized Numeric Input component with step buttons (+/-) built with native gpui_component Button primitives.

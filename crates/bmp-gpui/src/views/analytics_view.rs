@@ -17,16 +17,46 @@ pub struct AnalyticsView {
     pub cached_summary: Option<AnalyticsSummary>,
     pub cached_receipts: Vec<(String, Option<bmp_domain::StoreId>, Decimal, chrono::DateTime<chrono::Utc>)>,
     pub cached_stores: Vec<bmp_domain::Store>,
+    pub date_filter_select: Entity<SelectState<Vec<SelectOption>>>,
 }
 
 impl AnalyticsView {
-    pub fn new(services: AppServices) -> Self {
+    pub fn new(services: AppServices, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let date_options = vec![
+            SelectOption::new("all", "All Time"),
+            SelectOption::new("7d", "Past 7 Days"),
+            SelectOption::new("30d", "Past 30 Days"),
+        ];
+
+        let date_filter_select = cx.new(|cx| {
+            SelectState::new(
+                date_options,
+                Some(IndexPath::default().row(0)),
+                window,
+                cx,
+            )
+        });
+
+        cx.subscribe_in(
+            &date_filter_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.date_filter = id.clone();
+                    this.reload_data();
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
         let mut view = Self {
             services,
             date_filter: "all".to_string(),
             cached_summary: None,
             cached_receipts: Vec::new(),
             cached_stores: Vec::new(),
+            date_filter_select,
         };
         view.reload_data();
         view
@@ -66,12 +96,6 @@ impl Render for AnalyticsView {
             })
             .unwrap_or_else(|| "$0.00".to_string());
 
-        let date_options = vec![
-            SelectOption::new("all", "All Time"),
-            SelectOption::new("7d", "Past 7 Days"),
-            SelectOption::new("30d", "Past 30 Days"),
-        ];
-
         div()
             .flex()
             .flex_col()
@@ -107,15 +131,7 @@ impl Render for AnalyticsView {
                     .child(
                         div()
                             .w_48()
-                            .child(
-                                Select::new("select-analytics-date-filter", date_options)
-                                    .selected_id(Some(self.date_filter.clone()))
-                                    .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                        this.date_filter = opt.id.clone();
-                                        this.reload_data();
-                                        cx.notify();
-                                    })),
-                            ),
+                            .child(Select::new(&self.date_filter_select)),
                     ),
             )
             // Metric Cards Grid

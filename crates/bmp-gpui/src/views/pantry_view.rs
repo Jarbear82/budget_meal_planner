@@ -4,13 +4,13 @@ use bmp_services::AppServices;
 use chrono::{Local, NaiveDate};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::WindowExt;
 use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::dialog::{DialogDescription, DialogFooter, DialogHeader, DialogTitle};
 use gpui_component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_component::tag::Tag;
-use gpui_component::WindowExt;
 use gpui_component::{ActiveTheme, IndexPath, Selectable};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -91,15 +91,11 @@ impl RenderOnce for PantryListItem {
                         .text_color(cx.theme().foreground)
                         .child(self.item_name),
                 )
-                .child(
-                    div()
-                        .w_1_4()
-                        .child(Tag::new().child(format!(
-                            "{} {}",
-                            self.entry.quantity.amount.normalize(),
-                            self.entry.quantity.unit
-                        ))),
-                )
+                .child(div().w_1_4().child(Tag::new().child(format!(
+                    "{} {}",
+                    self.entry.quantity.amount.normalize(),
+                    self.entry.quantity.unit
+                ))))
                 .child(
                     div()
                         .w_1_4()
@@ -107,7 +103,12 @@ impl RenderOnce for PantryListItem {
                         .items_center()
                         .gap_2()
                         .child(Badge::new().child(exp_status))
-                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(exp_str)),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(exp_str),
+                        ),
                 )
                 .child(
                     div()
@@ -173,7 +174,8 @@ impl PantryListDelegate {
         let q = self.query.to_lowercase();
         let today = Local::now().date_naive();
 
-        let items_map: HashMap<ItemId, Item> = self.items.iter().map(|i| (i.id, i.clone())).collect();
+        let items_map: HashMap<ItemId, Item> =
+            self.items.iter().map(|i| (i.id, i.clone())).collect();
 
         let filtered: Vec<PantryEntry> = self
             .entries
@@ -225,11 +227,19 @@ impl PantryListDelegate {
                         ea.cmp(&eb)
                     }),
                     PantrySortMode::NameAsc => entries.sort_by(|a, b| {
-                        let na = items_map.get(&a.item_id).map(|i| i.name.as_str()).unwrap_or("");
-                        let nb = items_map.get(&b.item_id).map(|i| i.name.as_str()).unwrap_or("");
+                        let na = items_map
+                            .get(&a.item_id)
+                            .map(|i| i.name.as_str())
+                            .unwrap_or("");
+                        let nb = items_map
+                            .get(&b.item_id)
+                            .map(|i| i.name.as_str())
+                            .unwrap_or("");
                         na.to_lowercase().cmp(&nb.to_lowercase())
                     }),
-                    PantrySortMode::QuantityDesc => entries.sort_by(|a, b| b.quantity.amount.cmp(&a.quantity.amount)),
+                    PantrySortMode::QuantityDesc => {
+                        entries.sort_by(|a, b| b.quantity.amount.cmp(&a.quantity.amount))
+                    }
                 }
                 PantrySection { title, entries }
             })
@@ -245,7 +255,10 @@ impl ListDelegate for PantryListDelegate {
     }
 
     fn items_count(&self, section: usize, _: &App) -> usize {
-        self.sections.get(section).map(|s| s.entries.len()).unwrap_or(0)
+        self.sections
+            .get(section)
+            .map(|s| s.entries.len())
+            .unwrap_or(0)
     }
 
     fn render_section_header(
@@ -333,6 +346,9 @@ pub struct PantryView {
     // Grouping & Sorting state
     pub group_mode: PantryGroupMode,
     pub sort_mode: PantrySortMode,
+
+    pub group_mode_select: Entity<SelectState<Vec<SelectOption>>>,
+    pub sort_mode_select: Entity<SelectState<Vec<SelectOption>>>,
 }
 
 impl PantryView {
@@ -351,6 +367,53 @@ impl PantryView {
 
         let pantry_list = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
 
+        let group_options = vec![
+            SelectOption::new("ExpirationStatus", "Group by Expiration Status"),
+            SelectOption::new("Category", "Group by Item Category"),
+        ];
+        let sort_options = vec![
+            SelectOption::new("ExpirationDate", "Sort by Expiration Date"),
+            SelectOption::new("NameAsc", "Sort A-Z"),
+            SelectOption::new("QuantityDesc", "Sort by Quantity"),
+        ];
+        let group_mode_select = cx.new(|cx| {
+            SelectState::new(group_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+        let sort_mode_select = cx.new(|cx| {
+            SelectState::new(sort_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+
+        cx.subscribe_in(
+            &group_mode_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.group_mode = match id.as_str() {
+                        "Category" => PantryGroupMode::Category,
+                        _ => PantryGroupMode::ExpirationStatus,
+                    };
+                    this.reload_data(cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &sort_mode_select,
+            window,
+            |this, _, ev: &SelectEvent<_>, _window, cx| {
+                if let SelectEvent::Confirm(Some(id)) = ev {
+                    this.sort_mode = match id.as_str() {
+                        "NameAsc" => PantrySortMode::NameAsc,
+                        "QuantityDesc" => PantrySortMode::QuantityDesc,
+                        _ => PantrySortMode::ExpirationDate,
+                    };
+                    this.reload_data(cx);
+                }
+            },
+        )
+        .detach();
+
         let mut view_state = Self {
             services,
             pantry_list,
@@ -367,6 +430,8 @@ impl PantryView {
 
             group_mode: PantryGroupMode::ExpirationStatus,
             sort_mode: PantrySortMode::ExpirationDate,
+            group_mode_select,
+            sort_mode_select,
         };
         view_state.reload_data(cx);
         view_state
@@ -399,166 +464,173 @@ impl PantryView {
 
     pub fn open_add_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let items = &self.cached_items;
-        self.add_item_id = items.first().map(|i| i.id);
-        self.add_amount = dec!(500);
-        self.add_unit = Unit::Gram;
-        self.add_expiration = Some(Local::now().date_naive() + chrono::Duration::days(14));
-        self.add_has_expiration = true;
+        let today = Local::now().date_naive();
+        let item_options: Vec<SelectOption> = items
+            .iter()
+            .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
+            .collect();
+
+        let unit_options = vec![
+            SelectOption::new("Gram", "Gram (g)"),
+            SelectOption::new("Kilogram", "Kilogram (kg)"),
+            SelectOption::new("Milliliter", "Milliliter (ml)"),
+            SelectOption::new("Liter", "Liter (L)"),
+            SelectOption::new("Cup", "Cup"),
+            SelectOption::new("Ounce", "Ounce (oz)"),
+            SelectOption::new("Pound", "Pound (lb)"),
+            SelectOption::new("Each", "Each (count)"),
+        ];
+
+        let item_select = cx.new(|cx| {
+            SelectState::new(
+                item_options,
+                if items.is_empty() {
+                    None
+                } else {
+                    Some(IndexPath::default().row(0))
+                },
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        let unit_select = cx.new(|cx| {
+            SelectState::new(unit_options, Some(IndexPath::default().row(0)), window, cx)
+        });
+        let exp_picker_state = cx.new(|cx| {
+            let mut picker = DatePickerState::new(window, cx);
+            picker.set_date(today + chrono::Duration::days(14), window, cx);
+            picker
+        });
 
         let view = cx.entity().clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
-            dialog
-                .w(px(500.))
-                .content(move |content, _, cx| {
-                    let view_read = view.read(cx);
-                    let items = &view_read.cached_items;
-                    let today = Local::now().date_naive();
-                    let item_options: Vec<SelectOption> = items
-                        .iter()
-                        .map(|i| SelectOption::new(i.id.0.to_string(), i.name.clone()))
-                        .collect();
+            let i_in = item_select.clone();
+            let u_in = unit_select.clone();
+            let exp_in = exp_picker_state.clone();
 
-                    let unit_options = vec![
-                        SelectOption::new("Gram", "Gram (g)"),
-                        SelectOption::new("Kilogram", "Kilogram (kg)"),
-                        SelectOption::new("Milliliter", "Milliliter (ml)"),
-                        SelectOption::new("Liter", "Liter (L)"),
-                        SelectOption::new("Cup", "Cup"),
-                        SelectOption::new("Ounce", "Ounce (oz)"),
-                        SelectOption::new("Pound", "Pound (lb)"),
-                        SelectOption::new("Each", "Each (count)"),
-                    ];
+            dialog.w(px(500.)).content(move |content, _, cx| {
+                let view_read = view.read(cx);
+                let add_amount = view_read.add_amount;
+                let add_has_exp = view_read.add_has_expiration;
 
-                    let add_item_id = view_read.add_item_id;
-                    let add_amount = view_read.add_amount;
-                    let add_unit = view_read.add_unit.clone();
-                    let add_has_exp = view_read.add_has_expiration;
-                    let add_exp = view_read.add_expiration.unwrap_or(today);
+                let v_num_amt = view.clone();
+                let v_cb_exp = view.clone();
+                let v_save = view.clone();
+                let i_save = i_in.clone();
+                let u_save = u_in.clone();
+                let exp_save = exp_in.clone();
 
-                    let v_select_item = view.clone();
-                    let v_num_amt = view.clone();
-                    let v_select_unit = view.clone();
-                    let v_cb_exp = view.clone();
-                    let v_dp_exp = view.clone();
-                    let v_save = view.clone();
-
-                    content
-                        .child(
-                            DialogHeader::new()
-                                .child(DialogTitle::new().child("Add Pantry Inventory Stock"))
-                                .child(DialogDescription::new().child("Deposit stock into your pantry inventory")),
-                        )
-                        .child(
-                            div()
-                                .py_4()
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .child(
-                                    Select::new("select-pantry-item", item_options)
-                                        .label("Item Name")
-                                        .selected_id(add_item_id.map(|id| id.0.to_string()))
-                                        .on_select(move |opt: &SelectOption, _window, cx| {
-                                            if let Ok(uuid) = uuid::Uuid::from_str(&opt.id) {
-                                                v_select_item.update(cx, |this, cx| {
-                                                    this.add_item_id = Some(ItemId(uuid));
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    NumberInput::new("input-pantry-amount", add_amount)
-                                        .label("Stock Quantity Amount")
-                                        .step(dec!(50))
-                                        .on_increment({
-                                            let v = v_num_amt.clone();
-                                            move |val, _window, cx| {
-                                                v.update(cx, |this, cx| {
-                                                    this.add_amount = *val;
-                                                    cx.notify();
-                                                });
-                                            }
-                                        })
-                                        .on_decrement({
-                                            let v = v_num_amt.clone();
-                                            move |val, _window, cx| {
-                                                v.update(cx, |this, cx| {
-                                                    this.add_amount = *val;
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    Select::new("select-pantry-unit", unit_options)
-                                        .label("Unit")
-                                        .selected_id(Some(format!("{:?}", add_unit)))
-                                        .on_select(move |opt: &SelectOption, _window, cx| {
-                                            let unit = match opt.id.as_str() {
-                                                "Kilogram" => Unit::Kilogram,
-                                                "Milliliter" => Unit::Milliliter,
-                                                "Liter" => Unit::Liter,
-                                                "Cup" => Unit::Cup,
-                                                "Ounce" => Unit::Ounce,
-                                                "Pound" => Unit::Pound,
-                                                "Each" => Unit::Each,
-                                                _ => Unit::Gram,
-                                            };
-                                            v_select_unit.update(cx, |this, cx| {
-                                                this.add_unit = unit;
+                content
+                    .child(
+                        DialogHeader::new()
+                            .child(DialogTitle::new().child("Add Pantry Inventory Stock"))
+                            .child(
+                                DialogDescription::new()
+                                    .child("Deposit stock into your pantry inventory"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .py_4()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(select_field("Item Name", Select::new(&i_in)))
+                            .child(
+                                NumberInput::new("input-pantry-amount", add_amount)
+                                    .label("Stock Quantity Amount")
+                                    .step(dec!(50))
+                                    .on_increment({
+                                        let v = v_num_amt.clone();
+                                        move |val, _window, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.add_amount = *val;
                                                 cx.notify();
                                             });
-                                        }),
-                                )
-                                .child(
-                                    Checkbox::new("cb-has-expiration")
-                                        .label("Set Expiration Date")
-                                        .checked(add_has_exp)
-                                        .on_click(move |checked, _window, cx| {
-                                            v_cb_exp.update(cx, |this, cx| {
-                                                this.add_has_expiration = *checked;
+                                        }
+                                    })
+                                    .on_decrement({
+                                        let v = v_num_amt.clone();
+                                        move |val, _window, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.add_amount = *val;
                                                 cx.notify();
                                             });
-                                        }),
-                                )
-                                .when(add_has_exp, |this| {
-                                    this.child(
-                                        DatePicker::new("dp-pantry-exp", add_exp)
-                                            .label("Expiration Date")
-                                            .on_change(move |date, _window, cx| {
-                                                v_dp_exp.update(cx, |this, cx| {
-                                                    this.add_expiration = Some(*date);
-                                                    cx.notify();
-                                                });
-                                            }),
-                                    )
-                                }),
-                        )
-                        .child(
-                            DialogFooter::new()
-                                .child(
-                                    Button::new("btn-cancel-pantry-modal")
-                                        .secondary()
-                                        .label("Cancel")
-                                        .on_click(|_, window, cx| {
-                                            window.close_dialog(cx);
-                                        }),
-                                )
-                                .child(
-                                    Button::new("btn-save-pantry-modal")
-                                        .primary()
-                                        .label("Deposit to Pantry")
-                                        .on_click(move |_, window, cx| {
-                                            v_save.update(cx, |this, cx| {
-                                                this.save_pantry_entry(cx);
-                                            });
-                                            window.close_dialog(cx);
-                                        }),
-                                ),
-                        )
-                })
+                                        }
+                                    }),
+                            )
+                            .child(select_field("Unit", Select::new(&u_in)))
+                            .child(
+                                Checkbox::new("cb-has-expiration")
+                                    .label("Set Expiration Date")
+                                    .checked(add_has_exp)
+                                    .on_click(move |checked, _window, cx| {
+                                        v_cb_exp.update(cx, |this, cx| {
+                                            this.add_has_expiration = *checked;
+                                            cx.notify();
+                                        });
+                                    }),
+                            )
+                            .when(add_has_exp, |this| {
+                                this.child(date_picker_field(
+                                    "Expiration Date",
+                                    DatePicker::new(&exp_in),
+                                ))
+                            }),
+                    )
+                    .child(
+                        DialogFooter::new()
+                            .child(
+                                Button::new("btn-cancel-pantry-modal")
+                                    .secondary()
+                                    .label("Cancel")
+                                    .on_click(|_, window, cx| {
+                                        window.close_dialog(cx);
+                                    }),
+                            )
+                            .child(
+                                Button::new("btn-save-pantry-modal")
+                                    .primary()
+                                    .label("Deposit to Pantry")
+                                    .on_click(move |_, window, cx| {
+                                        let i_uuid = i_save
+                                            .read(cx)
+                                            .selected_value()
+                                            .and_then(|s| uuid::Uuid::from_str(&s).ok())
+                                            .map(ItemId);
+                                        let u_str = u_save.read(cx).selected_value().cloned();
+                                        let unit = match u_str.as_deref() {
+                                            Some("Kilogram") => Unit::Kilogram,
+                                            Some("Milliliter") => Unit::Milliliter,
+                                            Some("Liter") => Unit::Liter,
+                                            Some("Cup") => Unit::Cup,
+                                            Some("Ounce") => Unit::Ounce,
+                                            Some("Pound") => Unit::Pound,
+                                            Some("Each") => Unit::Each,
+                                            _ => Unit::Gram,
+                                        };
+                                        let exp_date = match exp_save.read(cx).date() {
+                                            Date::Single(Some(d)) => Some(d),
+                                            Date::Range(Some(d), _) => Some(d),
+                                            _ => None,
+                                        };
+                                        v_save.update(cx, |this, cx| {
+                                            this.add_item_id = i_uuid;
+                                            this.add_unit = unit;
+                                            if this.add_has_expiration {
+                                                this.add_expiration = exp_date;
+                                            } else {
+                                                this.add_expiration = None;
+                                            }
+                                            this.save_pantry_entry(cx);
+                                        });
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                    )
+            })
         });
     }
 
@@ -572,29 +644,55 @@ impl PantryView {
             }
         };
 
-        let exp = if self.add_has_expiration {
-            self.add_expiration
-        } else {
-            None
-        };
-
         match self.services.pantry.add_pantry_entry(
             item_id,
             self.add_amount,
             self.add_unit.clone(),
-            exp,
+            self.add_expiration,
         ) {
-            Ok(_) => {
-                self.status_msg = "Added pantry stock successfully".to_string();
+            Ok(entry) => {
+                self.status_msg = format!(
+                    "Added stock: {} {}",
+                    entry.quantity.amount, entry.quantity.unit
+                );
             }
             Err(e) => {
-                self.status_msg = format!("Error adding stock: {}", e);
+                self.status_msg = format!("Error adding pantry stock: {}", e);
             }
         }
         self.reload_data(cx);
     }
 
-    pub fn update_quantity(&mut self, entry_id: PantryEntryId, delta: Decimal, cx: &mut Context<Self>) {
+    pub fn consume_entry(
+        &mut self,
+        entry_id: PantryEntryId,
+        amount: Decimal,
+        unit: Unit,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(entry) = self.cached_entries.iter().find(|e| e.id == entry_id) {
+            match self
+                .services
+                .pantry
+                .consume_pantry_item(entry.item_id, amount, unit.clone())
+            {
+                Ok(_) => {
+                    self.status_msg = format!("Consumed stock: {} {}", amount, unit);
+                }
+                Err(e) => {
+                    self.status_msg = format!("Error consuming stock: {}", e);
+                }
+            }
+            self.reload_data(cx);
+        }
+    }
+
+    pub fn update_quantity(
+        &mut self,
+        entry_id: PantryEntryId,
+        delta: Decimal,
+        cx: &mut Context<Self>,
+    ) {
         let entries = &self.cached_entries;
         if let Some(entry) = entries.iter().find(|e| e.id == entry_id) {
             let next_amount = entry.quantity.amount + delta;
@@ -624,17 +722,6 @@ impl PantryView {
 
 impl Render for PantryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let group_options = vec![
-            SelectOption::new("ExpirationStatus", "Group by Expiration Status"),
-            SelectOption::new("Category", "Group by Item Category"),
-        ];
-
-        let sort_options = vec![
-            SelectOption::new("ExpirationDate", "Sort by Expiration Date"),
-            SelectOption::new("NameAsc", "Sort A-Z"),
-            SelectOption::new("QuantityDesc", "Sort by Quantity"),
-        ];
-
         div()
             .flex()
             .flex_col()
@@ -696,33 +783,10 @@ impl Render for PantryView {
                     .bg(cx.theme().muted)
                     .rounded_lg()
                     .child(
-                        div().w_56().child(
-                            Select::new("select-pantry-group-mode", group_options)
-                                .label("Section Grouping")
-                                .selected_id(Some(format!("{:?}", self.group_mode)))
-                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                    this.group_mode = match opt.id.as_str() {
-                                        "Category" => PantryGroupMode::Category,
-                                        _ => PantryGroupMode::ExpirationStatus,
-                                    };
-                                    this.reload_data(cx);
-                                })),
-                        ),
+                        div().w_56().child(select_field("Section Grouping", Select::new(&self.group_mode_select))),
                     )
                     .child(
-                        div().w_48().child(
-                            Select::new("select-pantry-sort-mode", sort_options)
-                                .label("Sorting")
-                                .selected_id(Some(format!("{:?}", self.sort_mode)))
-                                .on_select(cx.listener(|this, opt: &SelectOption, _window, cx| {
-                                    this.sort_mode = match opt.id.as_str() {
-                                        "NameAsc" => PantrySortMode::NameAsc,
-                                        "QuantityDesc" => PantrySortMode::QuantityDesc,
-                                        _ => PantrySortMode::ExpirationDate,
-                                    };
-                                    this.reload_data(cx);
-                                })),
-                        ),
+                        div().w_48().child(select_field("Sorting", Select::new(&self.sort_mode_select))),
                     )
                     .child(Alert::new("pantry-status-alert", format!("Status: {}", self.status_msg))),
             )
