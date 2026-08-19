@@ -1,3 +1,5 @@
+use crate::error::ServiceResult;
+use crate::event_bus::EventBus;
 use bmp_domain::*;
 use bmp_storage::Storage;
 use chrono::{DateTime, Utc};
@@ -6,27 +8,32 @@ use std::collections::{HashMap, HashSet};
 
 pub struct ShoppingService {
     storage: Storage,
+    event_bus: EventBus,
 }
 
 impl ShoppingService {
-    pub fn new(storage: Storage) -> Self {
-        Self { storage }
+    pub fn new(storage: Storage, event_bus: EventBus) -> Self {
+        Self { storage, event_bus }
+    }
+
+    pub fn new_with_storage(storage: Storage) -> Self {
+        Self::new(storage, EventBus::default())
     }
 
     pub fn collect_scheduled_meal_requirements(
         &self,
         start_date: Option<DateTime<Utc>>,
         end_date: Option<DateTime<Utc>>,
-    ) -> Result<Vec<(ItemId, Quantity)>, String> {
-        let scheduled_meals = self.storage.get_all_scheduled_meals().map_err(|e| e.to_string())?;
-        let pre_planned_meals = self.storage.get_all_pre_planned_meals().map_err(|e| e.to_string())?;
+    ) -> ServiceResult<Vec<(ItemId, Quantity)>> {
+        let scheduled_meals = self.storage.get_all_scheduled_meals()?;
+        let pre_planned_meals = self.storage.get_all_pre_planned_meals()?;
         let pre_planned_map: HashMap<PrePlannedMealId, PrePlannedMeal> =
             pre_planned_meals.into_iter().map(|m| (m.id, m)).collect();
 
-        let recipes = self.storage.get_all_recipes().map_err(|e| e.to_string())?;
+        let recipes = self.storage.get_all_recipes()?;
         let recipes_map: HashMap<RecipeId, Recipe> = recipes.into_iter().map(|r| (r.id, r)).collect();
 
-        let items = self.storage.get_all_items().map_err(|e| e.to_string())?;
+        let items = self.storage.get_all_items()?;
         let items_map: HashMap<ItemId, Item> = items.into_iter().map(|i| (i.id, i)).collect();
 
         let mut total_requirements = Vec::new();
@@ -102,30 +109,34 @@ impl ShoppingService {
         mut scheduled_meal_requirements: Vec<(ItemId, Quantity)>,
         selected_store_id: Option<StoreId>,
         tax_rate: Option<Decimal>,
-    ) -> Result<ShoppingList, String> {
+    ) -> ServiceResult<ShoppingList> {
         if scheduled_meal_requirements.is_empty() {
             scheduled_meal_requirements = self.collect_scheduled_meal_requirements(None, None)?;
         }
 
-        let items_list = self.storage.get_all_items().map_err(|e| e.to_string())?;
+        let items_list = self.storage.get_all_items()?;
         let items_map: HashMap<ItemId, Item> = items_list.into_iter().map(|i| (i.id, i)).collect();
 
         let mut packages_map = HashMap::new();
         for item_id in items_map.keys() {
-            let pkgs = self.storage.get_packages_for_item(*item_id).map_err(|e| e.to_string())?;
+            let pkgs = self.storage.get_packages_for_item(*item_id)?;
             packages_map.insert(*item_id, pkgs);
         }
 
-        let pantry_entries = self.storage.get_all_pantry_entries().map_err(|e| e.to_string())?;
+        let pantry_entries = self.storage.get_all_pantry_entries()?;
 
-        bmp_domain::shopping::generate_shopping_list(
+        let list = bmp_domain::shopping::generate_shopping_list(
             scheduled_meal_requirements,
             &items_map,
             &packages_map,
             &pantry_entries,
             selected_store_id,
             tax_rate,
-        )
-        .map_err(|e| e.to_string())
+        )?;
+        Ok(list)
+    }
+
+    pub fn notify_shopping_completed(&self) {
+        self.event_bus.publish(DomainEvent::ShoppingListPurchased);
     }
 }

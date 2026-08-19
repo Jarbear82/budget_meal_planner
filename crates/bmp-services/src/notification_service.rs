@@ -1,3 +1,4 @@
+use crate::error::ServiceResult;
 use bmp_domain::ScheduledMeal;
 use bmp_storage::Storage;
 use chrono::{DateTime, Duration, Utc};
@@ -12,8 +13,8 @@ impl NotificationService {
     }
 
     /// Checks scheduled meals and returns any that are due for consumption confirmation (e.g. 30 min after meal time).
-    pub fn check_pending_notifications(&self, current_time: DateTime<Utc>) -> Result<Vec<ScheduledMeal>, String> {
-        let meals = self.storage.get_all_scheduled_meals().map_err(|e| e.to_string())?;
+    pub fn check_pending_notifications(&self, current_time: DateTime<Utc>) -> ServiceResult<Vec<ScheduledMeal>> {
+        let meals = self.storage.get_all_scheduled_meals()?;
         let due_meals = meals
             .into_iter()
             .filter(|m| {

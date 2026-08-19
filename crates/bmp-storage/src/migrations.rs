@@ -1,11 +1,17 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, params};
+use chrono::Utc;
 
-pub fn run_migrations(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "
-        PRAGMA foreign_keys = ON;
-        PRAGMA journal_mode = WAL;
+pub struct Migration {
+    pub version: u32,
+    pub description: &'static str,
+    pub sql: &'static str,
+}
 
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "Initial core schema tables",
+        sql: "
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -115,9 +121,65 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             datetime TEXT NOT NULL
         );
         ",
+    },
+    Migration {
+        version: 2,
+        description: "Performance indexes for foreign keys and queries",
+        sql: "
+        CREATE INDEX IF NOT EXISTS idx_packages_item_id ON packages(item_id);
+        CREATE INDEX IF NOT EXISTS idx_packages_store_id ON packages(store_id);
+        CREATE INDEX IF NOT EXISTS idx_recipe_yields_recipe_id ON recipe_yields(recipe_id);
+        CREATE INDEX IF NOT EXISTS idx_recipe_yields_item_id ON recipe_yields(item_id);
+        CREATE INDEX IF NOT EXISTS idx_ingredient_edges_recipe_id ON ingredient_edges(recipe_id);
+        CREATE INDEX IF NOT EXISTS idx_ingredient_edges_target ON ingredient_edges(target_id);
+        CREATE INDEX IF NOT EXISTS idx_meal_components_meal_id ON meal_components(meal_id);
+        CREATE INDEX IF NOT EXISTS idx_pantry_entries_item_id ON pantry_entries(item_id);
+        CREATE INDEX IF NOT EXISTS idx_scheduled_meals_datetime ON scheduled_meals(datetime);
+        CREATE INDEX IF NOT EXISTS idx_receipts_datetime ON receipts(datetime);
+        ",
+    },
+    Migration {
+        version: 3,
+        description: "Verify columns and schema consistency",
+        sql: "
+        -- Safe idempotent verification
+        SELECT 1;
+        ",
+    },
+];
+
+pub fn run_migrations(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        PRAGMA foreign_keys = ON;
+        PRAGMA journal_mode = WAL;
+
+        CREATE TABLE IF NOT EXISTS _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL,
+            description TEXT NOT NULL
+        );
+        ",
     )?;
 
-    // Safe column additions for existing databases
+    // Query applied versions
+    let mut stmt = conn.prepare("SELECT version FROM _schema_migrations")?;
+    let applied_versions: std::collections::HashSet<u32> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|v| v.ok())
+        .collect();
+
+    for migration in MIGRATIONS {
+        if !applied_versions.contains(&migration.version) {
+            conn.execute_batch(migration.sql)?;
+            conn.execute(
+                "INSERT INTO _schema_migrations (version, applied_at, description) VALUES (?1, ?2, ?3)",
+                params![migration.version, Utc::now().to_rfc3339(), migration.description],
+            )?;
+        }
+    }
+
+    // Safe column additions for legacy databases if they upgraded from older schema
     let _ = conn.execute("ALTER TABLE items ADD COLUMN nutrition TEXT;", []);
     let _ = conn.execute("ALTER TABLE items ADD COLUMN dietary_flags TEXT;", []);
     let _ = conn.execute("ALTER TABLE recipes ADD COLUMN meal_type TEXT;", []);

@@ -60,4 +60,15 @@ impl Storage {
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
+
+    pub fn with_transaction<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&rusqlite::Transaction) -> Result<T>,
+    {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let res = f(&tx)?;
+        tx.commit()?;
+        Ok(res)
+    }
 }

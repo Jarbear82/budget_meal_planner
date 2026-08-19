@@ -82,6 +82,18 @@ impl SettingsView {
         cx.notify();
     }
 
+    pub fn export_backup(&mut self, cx: &mut Context<Self>) {
+        match self.services.backup.export_json() {
+            Ok(json_str) => {
+                self.status_msg = format!("Database backup exported successfully ({} bytes)!", json_str.len());
+            }
+            Err(e) => {
+                self.status_msg = format!("Backup Export Error: {}", e);
+            }
+        }
+        cx.notify();
+    }
+
     fn setting_pages(&self, _: &mut Window, cx: &mut Context<Self>) -> Vec<SettingPage> {
         let view = cx.entity().clone();
         let default_settings = AppSettings::default();
@@ -103,7 +115,6 @@ impl SettingsView {
                                     min: 1.0,
                                     max: 20.0,
                                     step: 1.0,
-                                    ..Default::default()
                                 },
                                 {
                                     let view = view.clone();
@@ -231,7 +242,6 @@ impl SettingsView {
                                     min: 5.0,
                                     max: 120.0,
                                     step: 5.0,
-                                    ..Default::default()
                                 },
                                 {
                                     let view = view.clone();
@@ -410,6 +420,28 @@ impl SettingsView {
                         )
                         .description("Populate missing domain ingredients and starter recipes into your database without creating duplicates.")
                         .keywords(["seed", "sample", "ingredients", "recipes", "starter"]),
+                    ]),
+                    SettingGroup::new().title("Backup & Data Portability (JSON)").items(vec![
+                        SettingItem::new(
+                            "Export Database Backup",
+                            SettingField::render({
+                                let view = view.clone();
+                                move |options, _window, _cx| {
+                                    let v = view.clone();
+                                    Button::new("btn-export-backup")
+                                        .outline()
+                                        .label("📦 Export Database (JSON)")
+                                        .with_size(options.size)
+                                        .on_click(move |_, _, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.export_backup(cx);
+                                            });
+                                        })
+                                }
+                            }),
+                        )
+                        .description("Export full database entities to JSON format for local backup, offline archival, or transfer (SRS §3.4.1).")
+                        .keywords(["backup", "export", "json", "portability"]),
                     ]),
                     SettingGroup::new().title("Local SQLite Engine").items(vec![
                         SettingItem::render(|_options, _, cx| {

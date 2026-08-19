@@ -1,9 +1,10 @@
 pub mod db;
 pub mod migrations;
-pub mod repo;
+pub mod repos;
 
 pub use db::*;
 pub use migrations::*;
+pub use repos::*;
 
 #[cfg(test)]
 mod tests {
@@ -65,5 +66,64 @@ mod tests {
         assert_eq!(fetched_bridge.from_qty.unit, Unit::Each);
         assert_eq!(fetched_bridge.to_qty.amount, dec!(180));
         assert_eq!(fetched_bridge.to_qty.unit, Unit::Gram);
+    }
+
+    #[test]
+    fn test_versioned_migrations_and_indexes() {
+        let storage = Storage::in_memory().unwrap();
+        let conn = storage.conn();
+
+        // Check _schema_migrations has 3 versions applied
+        let mut stmt = conn.prepare("SELECT version, description FROM _schema_migrations ORDER BY version ASC").unwrap();
+        let versions: Vec<(u32, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().filter_map(|r| r.ok()).collect();
+        assert!(versions.len() >= 3);
+        assert_eq!(versions[0].0, 1);
+        assert_eq!(versions[1].0, 2);
+        assert_eq!(versions[2].0, 3);
+
+        // Check indexes exist
+        let mut idx_stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'").unwrap();
+        let indexes: Vec<String> = idx_stmt.query_map([], |row| row.get(0)).unwrap().filter_map(|r| r.ok()).collect();
+        assert!(indexes.contains(&"idx_packages_item_id".to_string()));
+        assert!(indexes.contains(&"idx_packages_store_id".to_string()));
+        assert!(indexes.contains(&"idx_recipe_yields_recipe_id".to_string()));
+        assert!(indexes.contains(&"idx_ingredient_edges_recipe_id".to_string()));
+        assert!(indexes.contains(&"idx_pantry_entries_item_id".to_string()));
+        assert!(indexes.contains(&"idx_scheduled_meals_datetime".to_string()));
+        assert!(indexes.contains(&"idx_receipts_datetime".to_string()));
+    }
+
+    #[test]
+    fn test_transaction_atomicity_and_rollback() {
+        let storage = Storage::in_memory().unwrap();
+        let item = Item::new("Butter");
+        let item_id = item.id;
+
+        // Transaction that fails should rollback completely
+        let res: rusqlite::Result<()> = storage.with_transaction(|tx| {
+            tx.execute(
+                "INSERT INTO items (id, name, preferred_purchase_mode) VALUES (?1, ?2, 'BuyFinished')",
+                rusqlite::params![item_id.0.to_string(), "Butter"],
+            )?;
+            // Intentional syntax error to trigger rollback
+            tx.execute("INVALID SQL STATEMENT", [])?;
+            Ok(())
+        });
+
+        assert!(res.is_err());
+        let fetched = storage.get_item(item_id).unwrap();
+        assert!(fetched.is_none(), "Item should not exist after transaction rollback");
+
+        // Transaction that succeeds should persist
+        storage.with_transaction(|tx| {
+            tx.execute(
+                "INSERT INTO items (id, name, preferred_purchase_mode) VALUES (?1, ?2, '\"BuyFinished\"')",
+                rusqlite::params![item_id.0.to_string(), "Butter"],
+            )?;
+            Ok(())
+        }).unwrap();
+
+        let fetched_after = storage.get_item(item_id).unwrap();
+        assert!(fetched_after.is_some(), "Item should exist after successful transaction commit");
     }
 }

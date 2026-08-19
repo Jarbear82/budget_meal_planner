@@ -1304,19 +1304,20 @@ impl RecipesView {
 }
 
 impl Render for RecipesView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_recipe = self
             .selected_recipe_id
             .and_then(|id| self.cached_recipes.iter().find(|r| r.id == id).cloned());
 
+        let layout = ResponsiveLayout::from_window(window);
+
         div()
+            .size_full()
             .flex()
             .flex_col()
+            .p_4()
             .gap_4()
-            .size_full()
-            .p_6()
             .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
             // Header Bar
             .child(
                 div()
@@ -1327,9 +1328,10 @@ impl Render for RecipesView {
                         div()
                             .flex()
                             .flex_col()
+                            .gap_1()
                             .child(
                                 div()
-                                    .text_2xl()
+                                    .text_xl()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(cx.theme().foreground)
                                     .child("Recipe Matrix & Sub-Recipe DAG"),
@@ -1338,10 +1340,17 @@ impl Render for RecipesView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Manage multi-level recipe nesting, sourdough starter cycle awareness, and batch cook execution"),
+                                    .child(self.status_msg.clone()),
                             ),
                     )
-                    .child(Alert::new("recipe-status-alert", format!("Status: {}", self.status_msg))),
+                    .child(
+                        Button::new("btn-open-create-recipe")
+                            .primary()
+                            .label("+ Create New Recipe")
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.open_create_recipe_modal(window, cx);
+                            })),
+                    ),
             )
             // Controls & Filter Bar
             .child(
@@ -1365,17 +1374,9 @@ impl Render for RecipesView {
                                     .w(px(200.))
                                     .child(Select::new(&self.sort_mode_select)),
                             ),
-                    )
-                    .child(
-                        Button::new("btn-open-create-recipe")
-                            .primary()
-                            .label("+ Create New Recipe")
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.open_create_recipe_modal(window, cx);
-                            })),
                     ),
             )
-            // Main Grid Layout: Virtualized Recipe List on Left, Detail / Costing on Right
+            // Main Responsive Layout: Side-by-Side Split on Wide, Full List on Compact/Vertical
             .child(
                 div()
                     .flex()
@@ -1383,7 +1384,8 @@ impl Render for RecipesView {
                     .flex_1()
                     .child(
                         div()
-                            .w_1_2()
+                            .when(layout.is_wide(), |this| this.w_1_2())
+                            .when(!layout.is_wide(), |this| this.w_full())
                             .h_full()
                             .border_1()
                             .border_color(cx.theme().border)
@@ -1391,100 +1393,102 @@ impl Render for RecipesView {
                             .overflow_hidden()
                             .child(List::new(&self.recipe_list)),
                     )
-                    .child(
-                        div()
-                            .w_1_2()
-                            .flex()
-                            .flex_col()
-                            .gap_4()
-                            .child(
-                                if let Some(recipe) = selected_recipe {
-                                    let cost_display = if let Some(cost) = &self.cached_cost {
-                                        format!("Est. Cost: ${} / batch (${} / serving)", cost.price_per_batch, cost.price_per_serving)
-                                    } else {
-                                        "Cost: Unknown / Missing Store Packages".to_string()
-                                    };
+                    .when(layout.is_wide(), |this| {
+                        this.child(
+                            div()
+                                .w_1_2()
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .child(
+                                    if let Some(recipe) = selected_recipe {
+                                        let cost_display = if let Some(cost) = &self.cached_cost {
+                                            format!("Est. Cost: ${} / batch (${} / serving)", cost.price_per_batch, cost.price_per_serving)
+                                        } else {
+                                            "Cost: Unknown / Missing Store Packages".to_string()
+                                        };
 
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_4()
-                                        .p_4()
-                                        .bg(cx.theme().muted)
-                                        .border_1()
-                                        .border_color(cx.theme().border)
-                                        .rounded_xl()
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .child(
-                                                    div()
-                                                        .text_lg()
-                                                        .font_weight(FontWeight::BOLD)
-                                                        .child(format!("Selected: {}", recipe.name)),
-                                                )
-                                                .child(Badge::new().child(recipe.meal_type.clone().unwrap_or_else(|| "Dinner".to_string()))),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .font_weight(FontWeight::BOLD)
-                                                .text_color(cx.theme().foreground)
-                                                .child(cost_display),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(format!("Instructions: {}", if recipe.instructions.is_empty() { "None" } else { &recipe.instructions })),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .font_weight(FontWeight::BOLD)
-                                                .child("Ingredients / Component Edges:"),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_1()
-                                                .children(recipe.ingredients.iter().map(|edge| {
-                                                    let is_cycle = edge.cycle_flag;
-                                                    let is_opt = !edge.required;
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .text_xs()
-                                                        .child(format!("{:?} - {} {}", edge.target, edge.quantity.amount.normalize(), edge.quantity.unit))
-                                                        .child(
-                                                            div()
-                                                                .flex()
-                                                                .gap_1()
-                                                                .when(is_opt, |this| this.child(Badge::new().child("Optional")))
-                                                                .when(is_cycle, |this| this.child(Badge::new().child("Cycle"))),
-                                                        )
-                                                })),
-                                        )
-                                } else {
-                                    div()
-                                        .p_6()
-                                        .bg(cx.theme().muted)
-                                        .border_1()
-                                        .border_color(cx.theme().border)
-                                        .rounded_xl()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child("Select a recipe from the list to view nested expansion breakdown, costing analysis, or to initiate a batch make."),
-                                        )
-                                },
-                            ),
-                    ),
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_4()
+                                            .p_4()
+                                            .bg(cx.theme().muted)
+                                            .border_1()
+                                            .border_color(cx.theme().border)
+                                            .rounded_xl()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .child(
+                                                        div()
+                                                            .text_lg()
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .child(format!("Selected: {}", recipe.name)),
+                                                    )
+                                                    .child(Badge::new().child(recipe.meal_type.clone().unwrap_or_else(|| "Dinner".to_string()))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(cx.theme().foreground)
+                                                    .child(cost_display),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(format!("Instructions: {}", if recipe.instructions.is_empty() { "None" } else { &recipe.instructions })),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .child("Ingredients / Component Edges:"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .children(recipe.ingredients.iter().map(|edge| {
+                                                        let is_cycle = edge.cycle_flag;
+                                                        let is_opt = !edge.required;
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .text_xs()
+                                                            .child(format!("{:?} - {} {}", edge.target, edge.quantity.amount.normalize(), edge.quantity.unit))
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .gap_1()
+                                                                    .when(is_opt, |this| this.child(Badge::new().child("Optional")))
+                                                                    .when(is_cycle, |this| this.child(Badge::new().child("Cycle"))),
+                                                             )
+                                                    })),
+                                            )
+                                    } else {
+                                        div()
+                                            .p_6()
+                                            .bg(cx.theme().muted)
+                                            .border_1()
+                                            .border_color(cx.theme().border)
+                                            .rounded_xl()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child("Select a recipe from the list to view nested expansion breakdown, costing analysis, or to initiate a batch make."),
+                                            )
+                                    },
+                                ),
+                        )
+                    }),
             )
     }
 }

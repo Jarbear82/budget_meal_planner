@@ -4,7 +4,6 @@ use bmp_services::AppServices;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::WindowExt;
-use gpui_component::alert::Alert;
 use gpui_component::badge::Badge;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
@@ -1023,7 +1022,7 @@ impl ItemsView {
 }
 
 impl Render for ItemsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stores = self.cached_stores.clone();
         let selected_item = self
             .selected_item_id
@@ -1031,15 +1030,16 @@ impl Render for ItemsView {
         let _has_selected_item = selected_item.is_some();
         let _selected_item_packages = self.cached_packages.clone();
 
+        let layout = ResponsiveLayout::from_window(window);
+
         div()
+            .size_full()
             .flex()
             .flex_col()
+            .p_4()
             .gap_4()
-            .size_full()
-            .p_6()
             .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            // Header Bar
+            // Header: Title & Action Summary & Status Bar
             .child(
                 div()
                     .flex()
@@ -1049,23 +1049,45 @@ impl Render for ItemsView {
                         div()
                             .flex()
                             .flex_col()
+                            .gap_1()
                             .child(
                                 div()
-                                    .text_2xl()
+                                    .text_xl()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(cx.theme().foreground)
-                                    .child("Domain Items & Density Matrix"),
+                                    .child("Ingredient & Item Matrix"),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Manage physical conversion densities, store packages, and mass-per-each bridges"),
+                                    .child(self.status_msg.clone()),
                             ),
                     )
-                    .child(Alert::new("items-status-alert", format!("Status: {}", self.status_msg))),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Button::new("btn-open-add-store")
+                                    .secondary()
+                                    .label("+ Add Store")
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.open_add_store_modal(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-open-create-item")
+                                    .primary()
+                                    .label("+ Create New Item")
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.open_create_item_modal(window, cx);
+                                    })),
+                            ),
+                    ),
             )
-            // Controls & Filter Bar
+            // Filter, Sort, and Search Bar Controls
             .child(
                 div()
                     .flex()
@@ -1092,26 +1114,38 @@ impl Render for ItemsView {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
+                            .gap_1()
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Dietary:"))
                             .child(
-                                Button::new("btn-open-create-item")
-                                    .primary()
-                                    .label("+ Add Ingredient / Item")
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.open_create_item_modal(window, cx);
+                                Button::new("btn-diet-all")
+                                    .ghost()
+                                    .label("All")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dietary_filter = None;
+                                        this.reload_data(cx);
                                     })),
                             )
                             .child(
-                                Button::new("btn-open-add-store")
-                                    .secondary()
-                                    .label("+ Add Store")
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.open_add_store_modal(window, cx);
+                                Button::new("btn-diet-vegan")
+                                    .ghost()
+                                    .label("Vegan")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dietary_filter = Some(DietaryFlag::Vegan);
+                                        this.reload_data(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-diet-glutenfree")
+                                    .ghost()
+                                    .label("GF")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dietary_filter = Some(DietaryFlag::GlutenFree);
+                                        this.reload_data(cx);
                                     })),
                             ),
                     ),
             )
-            // Main Grid Layout: Items Virtualized List on Left, Detail / Package Panel on Right
+            // Main Responsive Layout: Side-by-Side Split on Wide Screens, Full List on Compact/Vertical
             .child(
                 div()
                     .flex()
@@ -1119,7 +1153,8 @@ impl Render for ItemsView {
                     .flex_1()
                     .child(
                         div()
-                            .w_1_2()
+                            .when(layout.is_wide(), |this| this.w_1_2())
+                            .when(!layout.is_wide(), |this| this.w_full())
                             .h_full()
                             .border_1()
                             .border_color(cx.theme().border)
@@ -1127,88 +1162,90 @@ impl Render for ItemsView {
                             .overflow_hidden()
                             .child(List::new(&self.items_list)),
                     )
-                    .child(
-                        div()
-                            .w_1_2()
-                            .flex()
-                            .flex_col()
-                            .gap_4()
-                            .child(
-                                if let Some(item) = selected_item {
+                    .when(layout.is_wide(), |this| {
+                        this.child(
+                            div()
+                                .w_1_2()
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .child(
+                                    if let Some(item) = selected_item {
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_4()
+                                            .p_4()
+                                            .bg(cx.theme().muted)
+                                            .border_1()
+                                            .border_color(cx.theme().border)
+                                            .rounded_xl()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .child(
+                                                        div()
+                                                            .text_lg()
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .child(format!("Selected: {}", item.name)),
+                                                    )
+                                                    .child(Badge::new().child(format!("{:?}", item.preferred_purchase_mode))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(format!(
+                                                        "Density: {} | Category: {}",
+                                                        item.density.map(|d| format!("{} g/ml", d.g_per_ml.normalize())).unwrap_or_else(|| "Not set".to_string()),
+                                                        item.category.as_deref().unwrap_or("Uncategorized")
+                                                    )),
+                                            )
+                                    } else {
+                                        div()
+                                            .p_6()
+                                            .bg(cx.theme().muted)
+                                            .border_1()
+                                            .border_color(cx.theme().border)
+                                            .rounded_xl()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child("Select an ingredient from the list to view and configure store packages or count bridges."),
+                                            )
+                                    },
+                                )
+                                // Registered Stores Summary
+                                .child(
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .gap_4()
+                                        .gap_2()
                                         .p_4()
-                                        .bg(cx.theme().muted)
+                                        .bg(cx.theme().background)
                                         .border_1()
                                         .border_color(cx.theme().border)
                                         .rounded_xl()
+                                        .child(div().text_sm().font_weight(FontWeight::BOLD).child("Registered Grocery Stores"))
                                         .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .child(
-                                                    div()
-                                                        .text_lg()
-                                                        .font_weight(FontWeight::BOLD)
-                                                        .child(format!("Selected: {}", item.name)),
-                                                )
-                                                .child(Badge::new().child(format!("{:?}", item.preferred_purchase_mode))),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(format!(
-                                                    "Density: {} | Category: {}",
-                                                    item.density.map(|d| format!("{} g/ml", d.g_per_ml.normalize())).unwrap_or_else(|| "Not set".to_string()),
-                                                    item.category.as_deref().unwrap_or("Uncategorized")
-                                                )),
-                                        )
-                                } else {
-                                    div()
-                                        .p_6()
-                                        .bg(cx.theme().muted)
-                                        .border_1()
-                                        .border_color(cx.theme().border)
-                                        .rounded_xl()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child("Select an ingredient from the list to view and configure store packages or count bridges."),
-                                        )
-                                },
-                            )
-                            // Registered Stores Summary
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .p_4()
-                                    .bg(cx.theme().background)
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .rounded_xl()
-                                    .child(div().text_sm().font_weight(FontWeight::BOLD).child("Registered Grocery Stores"))
-                                    .child(
-                                        if stores.is_empty() {
-                                            div().text_xs().text_color(cx.theme().muted_foreground).child("No stores added yet. Click '+ Add Store' above.")
-                                        } else {
-                                            div()
-                                                .flex()
-                                                .flex_wrap()
-                                                .gap_2()
-                                                .children(stores.into_iter().map(|s| {
-                                                    Badge::new().child(s.name)
-                                                }))
-                                        }
-                                    ),
-                            ),
-                    ),
+                                            if stores.is_empty() {
+                                                div().text_xs().text_color(cx.theme().muted_foreground).child("No stores added yet. Click '+ Add Store' above.")
+                                            } else {
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap_2()
+                                                    .children(stores.into_iter().map(|s| {
+                                                        Badge::new().child(s.name)
+                                                    }))
+                                            }
+                                        ),
+                                ),
+                        )
+                    }),
             )
     }
 }

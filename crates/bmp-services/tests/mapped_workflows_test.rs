@@ -560,3 +560,143 @@ fn test_spec_gaps_fixes() {
     let deleted_item = items_after.iter().find(|i| i.id == flour.id).unwrap();
     assert!(deleted_item.name.contains("[Deleted Item: Flour]"));
 }
+
+#[tokio::test]
+async fn test_domain_event_bus_publishing_and_subscription() {
+    let services = setup_services();
+    let mut rx = services.event_bus.subscribe();
+
+    // Trigger item creation
+    let apple = services.items.create_item("Honeycrisp Apple", None, Some("Produce")).unwrap();
+    let ev1 = rx.recv().await.unwrap();
+    assert_eq!(ev1, DomainEvent::ItemCreated(apple.id));
+
+    // Trigger store & package creation
+    let store = services.items.add_store("Safeway").unwrap();
+    let ev2 = rx.recv().await.unwrap();
+    assert_eq!(ev2, DomainEvent::StoreCreated(store.id));
+
+    let pkg = services.items.add_package(apple.id, store.id, dec!(1), Unit::Pound, dec!(2.49)).unwrap();
+    let ev3 = rx.recv().await.unwrap();
+    assert_eq!(ev3, DomainEvent::PackageCreated(pkg.id));
+
+    // Trigger recipe save
+    let mut recipe = Recipe::new("Apple Slices", dec!(2));
+    recipe = recipe.add_ingredient(IngredientEdge::item(apple.id, Quantity::new(dec!(1), Unit::Pound).unwrap()));
+    let saved_recipe = services.recipes.save_recipe(recipe).unwrap();
+    let ev4 = rx.recv().await.unwrap();
+    assert_eq!(ev4, DomainEvent::RecipeSaved(saved_recipe.id));
+
+    // Trigger receipt record
+    let receipt_id = services.analytics.record_receipt(Some(store.id), dec!(15.99), Utc::now()).unwrap();
+    let ev5 = rx.recv().await.unwrap();
+    assert_eq!(ev5, DomainEvent::ReceiptRecorded(receipt_id));
+}
+
+#[test]
+fn test_batch_operations_packages_and_pantry() {
+    let services = setup_services();
+    let store = services.items.add_store("Costco").unwrap();
+    let milk = services.items.create_item("Whole Milk", Some(dec!(1.03)), Some("Dairy")).unwrap();
+    let eggs = services.items.create_item("Large Eggs", None, Some("Dairy")).unwrap();
+
+    let pkg1 = Package::new(milk.id, store.id, Quantity::new(dec!(1), Unit::Liter).unwrap(), dec!(3.79));
+    let pkg2 = Package::new(eggs.id, store.id, Quantity::new(dec!(24), Unit::Each).unwrap(), dec!(5.99));
+
+    // Batch packages insert
+    services.items.upsert_packages_batch(&[pkg1.clone(), pkg2.clone()]).unwrap();
+    let milk_pkgs = services.items.get_packages_for_item(milk.id).unwrap();
+    let eggs_pkgs = services.items.get_packages_for_item(eggs.id).unwrap();
+    assert_eq!(milk_pkgs.len(), 1);
+    assert_eq!(eggs_pkgs.len(), 1);
+
+    // Pantry bulk adjust
+    let p1 = services.pantry.add_pantry_entry(milk.id, dec!(1000), Unit::Milliliter, None).unwrap();
+    let p2 = services.pantry.add_pantry_entry(eggs.id, dec!(12), Unit::Each, None).unwrap();
+
+    services.pantry.bulk_pantry_adjust(&[
+        (p1.id, dec!(800)),
+        (p2.id, dec!(10)),
+    ]).unwrap();
+
+    let pantry = services.pantry.get_pantry().unwrap();
+    let updated_p1 = pantry.iter().find(|p| p.id == p1.id).unwrap();
+    let updated_p2 = pantry.iter().find(|p| p.id == p2.id).unwrap();
+    assert_eq!(updated_p1.quantity.amount, dec!(800));
+    assert_eq!(updated_p2.quantity.amount, dec!(10));
+}
+
+#[test]
+fn test_full_database_backup_export_and_import_roundtrip() {
+    let services1 = setup_services();
+
+    // Populate database with rich relational data
+    let oats = services1.items.create_item("Oats", Some(dec!(0.41)), Some("Grains")).unwrap();
+    let honey = services1.items.create_item("Honey", Some(dec!(1.42)), Some("Baking")).unwrap();
+    let store = services1.items.add_store("Trader Joe's").unwrap();
+
+    let pkg1 = services1.items.add_package(oats.id, store.id, dec!(2), Unit::Pound, dec!(4.29)).unwrap();
+    let _pkg2 = services1.items.add_package(honey.id, store.id, dec!(16), Unit::Ounce, dec!(6.49)).unwrap();
+
+    let mut granola = Recipe::new("Homemade Granola", dec!(4));
+    granola = granola.add_ingredient(IngredientEdge::item(oats.id, Quantity::new(dec!(200), Unit::Gram).unwrap()));
+    granola = granola.add_ingredient(IngredientEdge::item(honey.id, Quantity::new(dec!(50), Unit::Gram).unwrap()));
+    let saved_granola = services1.recipes.save_recipe(granola).unwrap();
+
+    let meal = services1.meals.schedule_meal(
+        ScheduledMealSource::OneOff(MealComponent::Recipe { recipe_id: saved_granola.id, servings: dec!(2) }),
+        Utc::now(),
+        2,
+    ).unwrap();
+
+    let pantry = services1.pantry.add_pantry_entry(oats.id, dec!(500), Unit::Gram, None).unwrap();
+    let _receipt_id = services1.analytics.record_receipt(Some(store.id), dec!(10.78), Utc::now()).unwrap();
+
+    // Export to JSON string
+    let json_backup = services1.backup.export_json().unwrap();
+    assert!(!json_backup.is_empty());
+    assert!(json_backup.contains("Homemade Granola"));
+    assert!(json_backup.contains("Trader Joe's"));
+
+    // Fresh storage 2 -> Import JSON
+    let storage2 = Storage::in_memory().unwrap();
+    let services2 = AppServices::new(storage2);
+
+    // Initial state of storage2 should be empty
+    assert_eq!(services2.items.list_items().unwrap().len(), 0);
+
+    // Import
+    services2.backup.import_json(&json_backup, true).unwrap();
+
+    // Verify all entities exist in storage2
+    let items2 = services2.items.list_items().unwrap();
+    assert_eq!(items2.len(), 2);
+    assert!(items2.iter().any(|i| i.name == "Oats"));
+    assert!(items2.iter().any(|i| i.name == "Honey"));
+
+    let stores2 = services2.items.list_stores().unwrap();
+    assert_eq!(stores2.len(), 1);
+    assert_eq!(stores2[0].name, "Trader Joe's");
+
+    let packages2 = services2.items.get_packages_for_item(oats.id).unwrap();
+    assert_eq!(packages2.len(), 1);
+    assert_eq!(packages2[0].id, pkg1.id);
+    assert_eq!(packages2[0].price, dec!(4.29));
+
+    let recipes2 = services2.recipes.list_recipes().unwrap();
+    assert_eq!(recipes2.len(), 1);
+    assert_eq!(recipes2[0].name, "Homemade Granola");
+    assert_eq!(recipes2[0].ingredients.len(), 2);
+
+    let meals2 = services2.meals.list_scheduled_meals().unwrap();
+    assert_eq!(meals2.len(), 1);
+    assert_eq!(meals2[0].id, meal.id);
+
+    let pantry2 = services2.pantry.get_pantry().unwrap();
+    assert_eq!(pantry2.len(), 1);
+    assert_eq!(pantry2[0].id, pantry.id);
+    assert_eq!(pantry2[0].quantity.amount, dec!(500));
+
+    let summary2 = services2.analytics.get_overall_summary().unwrap();
+    assert_eq!(summary2.actual_expenditure, dec!(10.78));
+}

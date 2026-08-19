@@ -1,8 +1,10 @@
+pub mod backup;
 pub mod bridge;
 pub mod cost;
 pub mod cycle_detection;
 pub mod density;
 pub mod error;
+pub mod event;
 pub mod expansion;
 pub mod id;
 pub mod item;
@@ -16,11 +18,13 @@ pub mod store;
 pub mod substitute;
 pub mod units;
 
+pub use backup::*;
 pub use bridge::*;
 pub use cost::*;
 pub use cycle_detection::*;
 pub use density::*;
 pub use error::*;
+pub use event::*;
 pub use expansion::*;
 pub use id::*;
 pub use item::*;
