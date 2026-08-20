@@ -4,12 +4,13 @@ use bmp_services::AppServices;
 use bmp_storage::Storage;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Root,
+    ActiveTheme, Root, Theme,
     status_bar::StatusBar,
     tab::{Tab, TabBar},
 };
 
 pub struct BudgetMealPlannerApp {
+    _appearance_subscription: Subscription,
     pub _services: AppServices,
     pub db_path_str: String,
     pub active_tab: usize,
@@ -41,6 +42,10 @@ impl BudgetMealPlannerApp {
         };
 
         let services = AppServices::new(storage.clone());
+        let subscription = window.observe_window_appearance(|window, cx| {
+            Theme::sync_system_appearance(Some(window), cx);
+            cx.refresh_windows();
+        });
 
         let existing_items = storage.get_all_items().unwrap_or_default();
         let existing_recipes = storage.get_all_recipes().unwrap_or_default();
@@ -58,6 +63,7 @@ impl BudgetMealPlannerApp {
         let showcase_view = cx.new(|cx| ComponentShowcaseView::new(window, cx));
 
         Self {
+            _appearance_subscription: subscription,
             _services: services,
             db_path_str,
             active_tab: 0,
