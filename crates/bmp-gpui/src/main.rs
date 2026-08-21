@@ -16,11 +16,6 @@ fn main() {
         load_and_watch_themes(cx);
 
         let options = WindowOptions {
-            // window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            //     None,
-            //     size(px(1280.), px(800.)),
-            //     cx,
-            // ))),
             #[cfg(not(target_os = "linux"))]
             titlebar: Some(TitleBar::title_bar_options()),
             #[cfg(target_os = "linux")]

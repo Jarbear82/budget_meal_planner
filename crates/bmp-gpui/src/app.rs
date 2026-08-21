@@ -9,11 +9,51 @@ use gpui_component::{
     tab::{Tab, TabBar},
 };
 
+#[derive(Copy, Clone)]
+pub enum TabOption {
+    Items = 0,
+    Recipes = 1,
+    Schedule = 2,
+    ShoppingList = 3,
+    Pantry = 4,
+    Analytics = 5,
+    Settings = 6,
+    UiPrimitives = 7,
+}
+
+impl TabOption {
+    fn name(&self) -> String {
+        match self {
+            TabOption::Items => "Items & Packages".into(),
+            TabOption::Recipes => "Recipes".into(),
+            TabOption::Schedule => "Schedule".into(),
+            TabOption::ShoppingList => "Shopping List".into(),
+            TabOption::Pantry => "Pantry".into(),
+            TabOption::Analytics => "Analytics".into(),
+            TabOption::Settings => "Settings & Controls".into(),
+            TabOption::UiPrimitives => "UI Primitives".into(),
+        }
+    }
+    fn from_index(index: usize) -> Option<TabOption> {
+        match index {
+            0 => Some(TabOption::Items),
+            1 => Some(TabOption::Recipes),
+            2 => Some(TabOption::Schedule),
+            3 => Some(TabOption::ShoppingList),
+            4 => Some(TabOption::Pantry),
+            5 => Some(TabOption::Analytics),
+            6 => Some(TabOption::Settings),
+            7 => Some(TabOption::UiPrimitives),
+            _ => None,
+        }
+    }
+}
+
 pub struct BudgetMealPlannerApp {
     _appearance_subscription: Subscription,
     pub _services: AppServices,
     pub db_path_str: String,
-    pub active_tab: usize,
+    pub active_tab: TabOption,
     pub status_msg: String,
 
     pub items_view: Entity<ItemsView>,
@@ -66,7 +106,7 @@ impl BudgetMealPlannerApp {
             _appearance_subscription: subscription,
             _services: services,
             db_path_str,
-            active_tab: 0,
+            active_tab: TabOption::Items,
             status_msg: "Welcome to Budget Meal Planner v5!".to_string(),
             items_view,
             recipes_view,
@@ -79,8 +119,8 @@ impl BudgetMealPlannerApp {
         }
     }
 
-    pub fn set_tab(&mut self, tab_idx: usize, cx: &mut Context<Self>) {
-        self.active_tab = tab_idx;
+    pub fn set_tab(&mut self, tab: TabOption, cx: &mut Context<Self>) {
+        self.active_tab = tab;
         cx.notify();
     }
 }
@@ -88,16 +128,7 @@ impl BudgetMealPlannerApp {
 impl Render for BudgetMealPlannerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
-        let tab_name = match active_tab {
-            0 => "Items & Packages",
-            1 => "Recipes",
-            2 => "Schedule",
-            3 => "Shopping List",
-            4 => "Pantry",
-            5 => "Analytics",
-            6 => "Settings & Controls",
-            _ => "UI Primitives",
-        };
+        let tab_name = active_tab.name();
 
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let sheet_layer = Root::render_sheet_layer(window, cx);
@@ -121,9 +152,13 @@ impl Render for BudgetMealPlannerApp {
                     .border_color(cx.theme().border)
                     .child(
                         TabBar::new("app-main-tabs")
-                            .selected_index(active_tab)
-                            .on_click(cx.listener(|this, idx, _window, cx| {
-                                this.set_tab(*idx, cx);
+                            .selected_index(active_tab as usize)
+                            .on_click(cx.listener(|this, tab_idx, _window, cx| {
+                                this.set_tab(
+                                    TabOption::from_index(*tab_idx)
+                                        .unwrap_or(TabOption::UiPrimitives),
+                                    cx,
+                                );
                             }))
                             .child(Tab::new().label("Items & Packages"))
                             .child(Tab::new().label("Recipes"))
@@ -137,14 +172,14 @@ impl Render for BudgetMealPlannerApp {
             )
             // Active Tab Content View
             .child(div().flex_1().child(match active_tab {
-                0 => self.items_view.clone().into_any_element(),
-                1 => self.recipes_view.clone().into_any_element(),
-                2 => self.schedule_view.clone().into_any_element(),
-                3 => self.shopping_view.clone().into_any_element(),
-                4 => self.pantry_view.clone().into_any_element(),
-                5 => self.analytics_view.clone().into_any_element(),
-                6 => self.settings_view.clone().into_any_element(),
-                _ => self.showcase_view.clone().into_any_element(),
+                TabOption::Items => self.items_view.clone().into_any_element(),
+                TabOption::Recipes => self.recipes_view.clone().into_any_element(),
+                TabOption::Schedule => self.schedule_view.clone().into_any_element(),
+                TabOption::ShoppingList => self.shopping_view.clone().into_any_element(),
+                TabOption::Pantry => self.pantry_view.clone().into_any_element(),
+                TabOption::Analytics => self.analytics_view.clone().into_any_element(),
+                TabOption::Settings => self.settings_view.clone().into_any_element(),
+                TabOption::UiPrimitives => self.showcase_view.clone().into_any_element(),
             }))
             .child(
                 StatusBar::new()
