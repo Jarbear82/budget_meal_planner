@@ -55,17 +55,14 @@ pub struct NutritionalInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PurchaseMode {
+    #[default]
     BuyFinished,
     PreferMake,
     AskEveryTime,
 }
 
-impl Default for PurchaseMode {
-    fn default() -> Self {
-        PurchaseMode::BuyFinished
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
@@ -136,16 +133,14 @@ impl Item {
         if let Ok(direct) = qty.convert_direct(target_unit) {
             return Ok(direct);
         }
-        if let Some(ref bridge) = self.count_bridge {
-            if let Ok(bridged) = bridge.convert(qty, target_unit, self.density) {
+        if let Some(ref bridge) = self.count_bridge
+            && let Ok(bridged) = bridge.convert(qty, target_unit, self.density) {
                 return Ok(bridged);
             }
-        }
-        if let Some(ref density) = self.density {
-            if let Ok(dense) = density.convert(qty, target_unit) {
+        if let Some(ref density) = self.density
+            && let Ok(dense) = density.convert(qty, target_unit) {
                 return Ok(dense);
             }
-        }
         Err(crate::error::DomainError::IncompatibleUnits {
             from: format!("{}", qty.unit),
             to: format!("{}", target_unit),

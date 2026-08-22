@@ -42,16 +42,14 @@ impl ShoppingService {
             if meal.consumed.is_some() {
                 continue;
             }
-            if let Some(start) = start_date {
-                if meal.datetime < start {
+            if let Some(start) = start_date
+                && meal.datetime < start {
                     continue;
                 }
-            }
-            if let Some(end) = end_date {
-                if meal.datetime > end {
+            if let Some(end) = end_date
+                && meal.datetime > end {
                     continue;
                 }
-            }
 
             let components = match &meal.source {
                 ScheduledMealSource::PrePlanned(meal_id) => {

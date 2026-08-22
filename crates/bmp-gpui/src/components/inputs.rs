@@ -144,11 +144,10 @@ impl RenderOnce for NumberInput {
                             .label("-")
                             .on_click(move |_event, window, cx| {
                                 let next_val = val - step;
-                                if let Some(m) = min_val {
-                                    if next_val < m {
+                                if let Some(m) = min_val
+                                    && next_val < m {
                                         return;
                                     }
-                                }
                                 if let Some(ref cb) = on_dec {
                                     cb(&next_val, window, cx);
                                 }
@@ -183,11 +182,10 @@ impl RenderOnce for NumberInput {
                             .label("+")
                             .on_click(move |_event, window, cx| {
                                 let next_val = val + step;
-                                if let Some(m) = max_val {
-                                    if next_val > m {
+                                if let Some(m) = max_val
+                                    && next_val > m {
                                         return;
                                     }
-                                }
                                 if let Some(ref cb) = on_inc {
                                     cb(&next_val, window, cx);
                                 }

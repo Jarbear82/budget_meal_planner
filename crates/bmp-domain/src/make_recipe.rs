@@ -101,8 +101,8 @@ fn evaluate_make_recipe_internal(
                 ingredients_to_consume.push((resolved_id, scaled_qty));
             }
             crate::id::ItemOrRecipeId::Recipe(sub_recipe_id) => {
-                if let Some(sub_recipe) = recipes.get(&sub_recipe_id) {
-                    if let Some((yield_id, yield_qty)) = sub_recipe.yields.first() {
+                if let Some(sub_recipe) = recipes.get(&sub_recipe_id)
+                    && let Some((yield_id, yield_qty)) = sub_recipe.yields.first() {
                         let mode = items
                             .get(yield_id)
                             .map(|i| i.preferred_purchase_mode)
@@ -143,18 +143,16 @@ fn evaluate_make_recipe_internal(
                             }
                         }
                     }
-                }
             }
         }
     }
 
     let mut yields_produced = Vec::new();
     for (yield_item_id, yield_qty) in &recipe.yields {
-        if let Some(selected) = config.selected_yield_item {
-            if *yield_item_id != selected {
+        if let Some(selected) = config.selected_yield_item
+            && *yield_item_id != selected {
                 continue;
             }
-        }
         let scaled_yield = Quantity {
             amount: yield_qty.amount * config.batches,
             unit: yield_qty.unit.clone(),

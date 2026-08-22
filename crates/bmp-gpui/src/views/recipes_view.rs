@@ -232,7 +232,7 @@ impl RecipeListDelegate {
                 .map(|(title, mut recipes)| {
                     match self.sort_mode {
                         RecipeSortMode::NameAsc => recipes
-                            .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                            .sort_by_key(|a| a.name.to_lowercase()),
                         RecipeSortMode::NameDesc => recipes
                             .sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
                         RecipeSortMode::ServingsDesc => {
@@ -888,11 +888,10 @@ impl RecipesView {
                                                     let y_uuid = y_opt.and_then(|s| uuid::Uuid::from_str(&s).ok()).map(ItemId);
                                                     let unit = u_opt.map(|u| parse_unit(&u)).unwrap_or(Unit::Gram);
                                                     v_y_add.update(cx, |this, cx| {
-                                                        if let Some(y_id) = y_uuid {
-                                                            if let Ok(qty) = Quantity::new(this.yield_amount, unit) {
+                                                        if let Some(y_id) = y_uuid
+                                                            && let Ok(qty) = Quantity::new(this.yield_amount, unit) {
                                                                 this.recipe_form_yields.push((y_id, qty));
                                                             }
-                                                        }
                                                         cx.notify();
                                                     });
                                                 }),

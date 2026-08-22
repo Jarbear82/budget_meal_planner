@@ -49,8 +49,8 @@ pub fn calculate_recipe_cost_full(
     for edge in &recipe.ingredients {
         match edge.target {
             ItemOrRecipeId::Item(item_id) => {
-                if let Some(pkgs) = packages_map.get(&item_id) {
-                    if let Some(best_pkg) = pkgs.iter().min_by(|a, b| {
+                if let Some(pkgs) = packages_map.get(&item_id)
+                    && let Some(best_pkg) = pkgs.iter().min_by(|a, b| {
                         let cost_a = a.price / a.quantity.amount;
                         let cost_b = b.price / b.quantity.amount;
                         cost_a.cmp(&cost_b)
@@ -72,12 +72,11 @@ pub fn calculate_recipe_cost_full(
                         let ingredient_cost = unit_cost * req_amount;
                         total_batch_cost += ingredient_cost;
                     }
-                }
             }
             ItemOrRecipeId::Recipe(sub_recipe_id) => {
-                if let Some(sub_recipes) = recipes_map {
-                    if let Some(sub_recipe) = sub_recipes.get(&sub_recipe_id) {
-                        if let Ok(sub_cost) = calculate_recipe_cost_full(
+                if let Some(sub_recipes) = recipes_map
+                    && let Some(sub_recipe) = sub_recipes.get(&sub_recipe_id)
+                        && let Ok(sub_cost) = calculate_recipe_cost_full(
                             sub_recipe,
                             packages_map,
                             items_map,
@@ -96,8 +95,6 @@ pub fn calculate_recipe_cost_full(
                             };
                             total_batch_cost += sub_cost.price_per_batch * multiplier;
                         }
-                    }
-                }
             }
         }
     }

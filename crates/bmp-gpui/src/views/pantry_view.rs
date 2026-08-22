@@ -598,7 +598,7 @@ impl PantryView {
                                         let i_uuid = i_save
                                             .read(cx)
                                             .selected_value()
-                                            .and_then(|s| uuid::Uuid::from_str(&s).ok())
+                                            .and_then(|s| uuid::Uuid::from_str(s).ok())
                                             .map(ItemId);
                                         let u_str = u_save.read(cx).selected_value().cloned();
                                         let unit = match u_str.as_deref() {

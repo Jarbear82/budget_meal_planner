@@ -13,16 +13,24 @@ pub fn expand_recipe(
     items: &HashMap<ItemId, crate::item::Item>,
     visited: &mut HashSet<RecipeId>,
 ) -> Result<Vec<(ItemId, Quantity)>, DomainError> {
-    if visited.contains(&recipe_id) {
-        // Prevent infinite recursion if cycle occurs
+    if !visited.insert(recipe_id) {
         return Ok(Vec::new());
     }
 
-    visited.insert(recipe_id);
+    let result = expand_recipe_inner(recipe_id, multiplier, recipes, items, visited);
+    visited.remove(&recipe_id);
+    result
+}
 
-    let recipe = match recipes.get(&recipe_id) {
-        Some(r) => r,
-        None => return Ok(Vec::new()),
+fn expand_recipe_inner(
+    recipe_id: RecipeId,
+    multiplier: Decimal,
+    recipes: &HashMap<RecipeId, Recipe>,
+    items: &HashMap<ItemId, crate::item::Item>,
+    visited: &mut HashSet<RecipeId>,
+) -> Result<Vec<(ItemId, Quantity)>, DomainError> {
+    let Some(recipe) = recipes.get(&recipe_id) else {
+        return Ok(Vec::new());
     };
 
     let mut requirements = Vec::new();
@@ -33,18 +41,6 @@ pub fn expand_recipe(
             unit: edge.quantity.unit.clone(),
         };
 
-        if edge.cycle_flag {
-            // Edge has a cycle flag (e.g. sourdough starter), treat as base item if yield exists
-            if let ItemOrRecipeId::Recipe(sub_recipe_id) = edge.target {
-                if let Some(sub_recipe) = recipes.get(&sub_recipe_id) {
-                    if let Some((yield_item_id, _)) = sub_recipe.yields.first() {
-                        requirements.push((*yield_item_id, scaled_qty));
-                        continue;
-                    }
-                }
-            }
-        }
-
         match edge.target {
             ItemOrRecipeId::Item(item_id) => {
                 requirements.push((item_id, scaled_qty));
@@ -53,48 +49,24 @@ pub fn expand_recipe(
                 let sub_recipe = recipes.get(&sub_recipe_id);
                 let yield_item_id = sub_recipe.and_then(|r| r.yields.first().map(|y| y.0));
 
-                let mode = yield_item_id
+                let purchase_mode = yield_item_id
                     .and_then(|id| items.get(&id))
                     .map(|i| i.preferred_purchase_mode)
-                    .unwrap_or(PurchaseMode::BuyFinished);
+                    .unwrap_or_default();
 
-                if mode == PurchaseMode::BuyFinished && yield_item_id.is_some() {
-                    // Buy as finished item
-                    requirements.push((yield_item_id.unwrap(), scaled_qty));
-                } else {
-                    // Expand sub-recipe with proper batch scaling multiplier
-                    let sub_multiplier = if let Some(sub_r) = sub_recipe {
-                        if let Some((_, yield_qty)) = sub_r.yields.first() {
-                            if yield_qty.amount > Decimal::ZERO {
-                                scaled_qty.amount / yield_qty.amount
-                            } else if sub_r.servings > Decimal::ZERO {
-                                scaled_qty.amount / sub_r.servings
-                            } else {
-                                scaled_qty.amount
-                            }
-                        } else if sub_r.servings > Decimal::ZERO {
-                            scaled_qty.amount / sub_r.servings
-                        } else {
-                            scaled_qty.amount
-                        }
-                    } else {
-                        scaled_qty.amount
-                    };
+                let buy_as_finished = edge.cycle_flag || purchase_mode == PurchaseMode::BuyFinished;
 
-                    let sub_results = expand_recipe(
-                        sub_recipe_id,
-                        sub_multiplier,
-                        recipes,
-                        items,
-                        visited,
-                    )?;
+                if buy_as_finished && let Some(yield_id) = yield_item_id {
+                    requirements.push((yield_id, scaled_qty));
+                } else if let Some(sub_r) = sub_recipe {
+                    let sub_multiplier = sub_r.scale_multiplier(&scaled_qty);
+                    let sub_results =
+                        expand_recipe(sub_recipe_id, sub_multiplier, recipes, items, visited)?;
                     requirements.extend(sub_results);
                 }
             }
         }
     }
-
-    visited.remove(&recipe_id);
 
     Ok(requirements)
 }

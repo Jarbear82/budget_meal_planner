@@ -92,4 +92,23 @@ impl Recipe {
         self.meal_type = Some(meal_type.into());
         self
     }
+
+    /// Calculates the batch multiplier needed to satisfy a target quantity.
+    pub fn scale_multiplier(&self, target_qty: &Quantity) -> Decimal {
+        if let Some((_, yield_qty)) = self.yields.first() {
+            if yield_qty.amount > Decimal::ZERO {
+                let converted_target = target_qty
+                    .convert_direct(&yield_qty.unit)
+                    .map(|q| q.amount)
+                    .unwrap_or(target_qty.amount);
+                return converted_target / yield_qty.amount;
+            }
+        }
+
+        if self.servings > Decimal::ZERO {
+            return target_qty.amount / self.servings;
+        }
+
+        target_qty.amount
+    }
 }

@@ -26,15 +26,14 @@ impl Storage {
     }
 
     pub fn default_db_path() -> Result<std::path::PathBuf> {
-        if let Ok(env_path) = std::env::var("BMP_DB_PATH") {
-            if !env_path.trim().is_empty() {
+        if let Ok(env_path) = std::env::var("BMP_DB_PATH")
+            && !env_path.trim().is_empty() {
                 let path = std::path::PathBuf::from(env_path);
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 return Ok(path);
             }
-        }
 
         let base_dir = dirs::data_dir()
             .or_else(dirs::home_dir)

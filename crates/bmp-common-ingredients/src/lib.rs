@@ -52,15 +52,14 @@ pub fn seed_common_data_if_not_exists(storage: &Storage) -> Result<(usize, usize
 
     for ing in &list {
         let key = ing.name.to_lowercase();
-        if !items_map.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = items_map.entry(key) {
             let mut item = Item::new(ing.name).with_category(ing.category);
-            if let Some(d) = ing.density_g_per_ml {
-                if let Ok(den) = Density::new(d) {
+            if let Some(d) = ing.density_g_per_ml
+                && let Ok(den) = Density::new(d) {
                     item = item.with_density(den);
                 }
-            }
             if storage.insert_item(&item).is_ok() {
-                items_map.insert(key, item);
+                e.insert(item);
                 items_added += 1;
             }
         }
@@ -80,8 +79,8 @@ pub fn seed_common_data_if_not_exists(storage: &Storage) -> Result<(usize, usize
     };
 
     // 1. Seed "Classic Fluffy Pancakes"
-    if !existing_recipe_names.contains(&"classic fluffy pancakes".to_string()) {
-        if let (Some(flour_id), Some(milk_id), Some(egg_id), Some(butter_id), Some(sugar_id), Some(pancake_id)) = (
+    if !existing_recipe_names.contains(&"classic fluffy pancakes".to_string())
+        && let (Some(flour_id), Some(milk_id), Some(egg_id), Some(butter_id), Some(sugar_id), Some(pancake_id)) = (
             get_item_id("All-Purpose Flour"),
             get_item_id("Whole Milk"),
             get_item_id("Large Eggs"),
@@ -116,11 +115,10 @@ pub fn seed_common_data_if_not_exists(storage: &Storage) -> Result<(usize, usize
                 recipes_added += 1;
             }
         }
-    }
 
     // 2. Seed "Hearty Spaghetti Bolognese"
-    if !existing_recipe_names.contains(&"hearty spaghetti bolognese".to_string()) {
-        if let (Some(beef_id), Some(tomato_id), Some(onion_id), Some(garlic_id), Some(oil_id), Some(bolognese_id)) = (
+    if !existing_recipe_names.contains(&"hearty spaghetti bolognese".to_string())
+        && let (Some(beef_id), Some(tomato_id), Some(onion_id), Some(garlic_id), Some(oil_id), Some(bolognese_id)) = (
             get_item_id("Ground Beef 80/20"),
             get_item_id("Diced Tomatoes (Canned)"),
             get_item_id("Yellow Onion"),
@@ -155,11 +153,10 @@ pub fn seed_common_data_if_not_exists(storage: &Storage) -> Result<(usize, usize
                 recipes_added += 1;
             }
         }
-    }
 
     // 3. Seed "Seared Chicken & Rice Bowl"
-    if !existing_recipe_names.contains(&"seared chicken & rice bowl".to_string()) {
-        if let (Some(chicken_id), Some(rice_id), Some(oil_id), Some(salt_id), Some(bowl_id)) = (
+    if !existing_recipe_names.contains(&"seared chicken & rice bowl".to_string())
+        && let (Some(chicken_id), Some(rice_id), Some(oil_id), Some(salt_id), Some(bowl_id)) = (
             get_item_id("Boneless Chicken Breast"),
             get_item_id("White Rice"),
             get_item_id("Vegetable Oil"),
@@ -190,7 +187,6 @@ pub fn seed_common_data_if_not_exists(storage: &Storage) -> Result<(usize, usize
                 recipes_added += 1;
             }
         }
-    }
 
     Ok((items_added, recipes_added))
 }

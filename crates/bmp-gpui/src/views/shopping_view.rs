@@ -171,19 +171,18 @@ impl ShoppingView {
     }
 
     pub fn toggle_item_checked(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if let Some(ref mut list) = self.active_list {
-            if idx < list.items.len() {
+        if let Some(ref mut list) = self.active_list
+            && idx < list.items.len() {
                 list.items[idx].is_checked = !list.items[idx].is_checked;
                 let checked_count = list.items.iter().filter(|i| i.is_checked).count();
                 self.status_msg = format!("Checked {}/{} items", checked_count, list.items.len());
             }
-        }
         cx.notify();
     }
 
     pub fn toggle_line_purchase_mode(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if let Some(ref list) = self.active_list {
-            if idx < list.items.len() {
+        if let Some(ref list) = self.active_list
+            && idx < list.items.len() {
                 let item_id = list.items[idx].item_id;
                 let current_mode = list.items[idx].purchase_mode;
                 let new_mode = match current_mode {
@@ -199,7 +198,6 @@ impl ShoppingView {
                     );
                 }
             }
-        }
         self.generate_shopping_list(cx);
     }
 
@@ -537,7 +535,7 @@ impl ShoppingView {
                                         let i_uuid = i_save
                                             .read(cx)
                                             .selected_value()
-                                            .and_then(|s| uuid::Uuid::from_str(&s).ok())
+                                            .and_then(|s| uuid::Uuid::from_str(s).ok())
                                             .map(ItemId);
                                         let u_str = u_save.read(cx).selected_value().cloned();
                                         let unit = match u_str.as_deref() {

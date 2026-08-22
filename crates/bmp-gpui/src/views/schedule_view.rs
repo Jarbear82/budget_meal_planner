@@ -71,14 +71,12 @@ impl ScheduleView {
             .services
             .notification
             .check_pending_notifications(Utc::now())
-        {
-            if !pending.is_empty() {
+            && !pending.is_empty() {
                 self.status_msg = format!(
                     "🔔 Alert: You have {} scheduled meal(s) past 30-min window awaiting consumption confirmation!",
                     pending.len()
                 );
             }
-        }
     }
 
     pub fn check_pending_alerts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -286,7 +284,7 @@ impl ScheduleView {
                                         let r_uuid = rec_save
                                             .read(cx)
                                             .selected_value()
-                                            .and_then(|s| uuid::Uuid::from_str(&s).ok())
+                                            .and_then(|s| uuid::Uuid::from_str(s).ok())
                                             .map(RecipeId);
                                         let sel_date = match dp_save.read(cx).date() {
                                             Date::Single(Some(d)) => d,

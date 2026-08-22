@@ -177,11 +177,10 @@ impl ItemListDelegate {
                         return false;
                     }
                 }
-                if let Some(flag) = self.dietary_filter {
-                    if !item.dietary_flags.contains(&flag) {
+                if let Some(flag) = self.dietary_filter
+                    && !item.dietary_flags.contains(&flag) {
                         return false;
                     }
-                }
                 true
             })
             .cloned()
@@ -212,7 +211,7 @@ impl ItemListDelegate {
             .map(|(title, mut items)| {
                 match self.sort_mode {
                     ItemSortMode::NameAsc => {
-                        items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        items.sort_by_key(|a| a.name.to_lowercase())
                     }
                     ItemSortMode::NameDesc => {
                         items.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase()))
@@ -672,10 +671,7 @@ impl ItemsView {
                                         }
                                     }),
                             )
-                            .child(select_field(
-                                "Preferred Purchase Mode",
-                                Select::new(&m_in),
-                            ))
+                            .child(select_field("Preferred Purchase Mode", Select::new(&m_in)))
                             .child(
                                 div()
                                     .flex()
@@ -695,7 +691,7 @@ impl ItemsView {
                                                 .label(flag.as_str())
                                                 .checked(is_checked)
                                                 .on_click(move |checked, _window, cx| {
-                                                    let f = flag.clone();
+                                                    let f = flag;
                                                     let is_set = *checked;
                                                     vf.update(cx, |this, cx| {
                                                         if is_set {
@@ -885,8 +881,8 @@ impl ItemsView {
         };
 
         if let Some(item_id) = self.editing_item_id {
-            if let Ok(mut items) = self.services.items.list_items() {
-                if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
+            if let Ok(mut items) = self.services.items.list_items()
+                && let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
                     item.name = self.item_form_name.trim().to_string();
                     item.category = Some(self.item_form_category.trim().to_string());
                     item.preferred_purchase_mode = self.item_form_mode;
@@ -909,7 +905,6 @@ impl ItemsView {
                         }
                     }
                 }
-            }
         } else {
             match self.services.items.create_item(
                 self.item_form_name.trim(),

@@ -47,6 +47,10 @@ impl TabOption {
             _ => None,
         }
     }
+
+    fn index(self) -> usize {
+        self as usize
+    }
 }
 
 pub struct BudgetMealPlannerApp {
@@ -152,7 +156,7 @@ impl Render for BudgetMealPlannerApp {
                     .border_color(cx.theme().border)
                     .child(
                         TabBar::new("app-main-tabs")
-                            .selected_index(active_tab as usize)
+                            .selected_index(active_tab.index())
                             .on_click(cx.listener(|this, tab_idx, _window, cx| {
                                 this.set_tab(
                                     TabOption::from_index(*tab_idx)
